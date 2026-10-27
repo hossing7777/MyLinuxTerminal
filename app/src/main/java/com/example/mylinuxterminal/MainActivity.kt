@@ -40,21 +40,22 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v1.0", "Initializing Alpine Linux... Please wait.") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v2.0", "Initializing Alpine Linux... Please wait.") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
 
     suspend fun extractLinux() = withContext(Dispatchers.IO) {
-        val prootFile = File(context.filesDir, "proot")
+        // PRoot از nativeLibraryDir بارگذاری می‌شود
+        val prootFile = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
+        val prootLoader = File(context.applicationInfo.nativeLibraryDir, "libproot_loader.so")
         val alpineDir = File(context.filesDir, "alpine")
         val tarFile = File(context.filesDir, "alpine.tar.gz")
 
         if (!prootFile.exists() || !alpineDir.exists()) {
             try {
-                context.assets.open("proot").use { input ->
-                    prootFile.outputStream().use { output -> input.copyTo(output) }
-                }
-                prootFile.setExecutable(true)
+                // اطمینان از اجرایی بودن PRoot و Loader
+                if (prootFile.exists()) prootFile.setExecutable(true)
+                if (prootLoader.exists()) prootLoader.setExecutable(true)
 
                 context.assets.open("alpine.tar.gz").use { input ->
                     tarFile.outputStream().use { output -> input.copyTo(output) }
@@ -92,12 +93,20 @@ fun TerminalScreen() {
         coroutineScope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
-                    val prootPath = File(context.filesDir, "proot").absolutePath
+                    val prootPath = File(context.applicationInfo.nativeLibraryDir, "libproot.so").absolutePath
+                    val prootLoaderPath = File(context.applicationInfo.nativeLibraryDir, "libproot_loader.so").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
                     
                     val pb = ProcessBuilder(
-                        prootPath, "-r", alpinePath, "-0", "-w", "/",
-                        "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "/storage/emulated/0:/sdcard",
+                        prootPath, 
+                        "-r", alpinePath, 
+                        "-0", 
+                        "-w", "/",
+                        "-b", "/dev", 
+                        "-b", "/proc", 
+                        "-b", "/sys", 
+                        "-b", "/storage/emulated/0:/sdcard",
+                        "-b", "$prootLoaderPath:/lib/ld-musl-aarch64.so.1",
                         "/bin/sh", "-c", cleanCmd
                     )
                     pb.redirectErrorStream(true)

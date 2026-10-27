@@ -29,10 +29,7 @@ import java.io.File
 import java.io.InputStreamReader
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContent { TerminalScreen() }
-    }
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); setContent { TerminalScreen() } }
 }
 
 @Composable
@@ -40,47 +37,34 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v2.1", "Initializing Alpine Linux...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v2.2", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
 
     suspend fun extractLinux() = withContext(Dispatchers.IO) {
         val alpineDir = File(context.filesDir, "alpine")
         val tarFile = File(context.filesDir, "alpine.tar.gz")
-
         if (!alpineDir.exists() || alpineDir.listFiles()?.isEmpty() == true) {
             try {
-                context.assets.open("alpine.tar.gz").use { input ->
-                    tarFile.outputStream().use { output -> input.copyTo(output) }
-                }
+                context.assets.open("alpine.tar.gz").use { input -> tarFile.outputStream().use { output -> input.copyTo(output) } }
                 if (!alpineDir.exists()) alpineDir.mkdirs()
-                
+                // استفاده از tar سیستم برای استخراج (ممکن است در برخی دستگاه‌ها نیاز به BusyBox باشد)
                 val process = Runtime.getRuntime().exec("tar -xzf ${tarFile.absolutePath} -C ${alpineDir.absolutePath}")
-                val exitCode = process.waitFor()
-                if (exitCode == 0) tarFile.delete()
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) { outputLines.add("Extraction Error: ${e.message}") }
-            }
+                if (process.waitFor() == 0) tarFile.delete() else withContext(Dispatchers.Main) { outputLines.add("Warning: tar exit code ${process.exitValue()}") }
+            } catch (e: Exception) { withContext(Dispatchers.Main) { outputLines.add("Extraction Error: ${e.message}") } }
         }
         withContext(Dispatchers.Main) {
             isExtracted = true
-            outputLines.add("Alpine Linux initialized successfully!")
-            outputLines.add("Try: 'cat /etc/os-release' or 'apk add python3'")
+            outputLines.add("Alpine Linux initialized!")
             listState.animateScrollToItem(outputLines.size - 1)
         }
     }
-
     LaunchedEffect(Unit) { extractLinux() }
 
     fun runCommand(cmd: String) {
         val cleanCmd = cmd.trim()
         if (cleanCmd.isEmpty() || !isExtracted) return
-        
-        if (cleanCmd == "clear") {
-            outputLines.clear()
-            return
-        }
-        
+        if (cleanCmd == "clear") { outputLines.clear(); return }
         outputLines.add("root@alpine:~# $cleanCmd")
 
         coroutineScope.launch {
@@ -88,66 +72,45 @@ fun TerminalScreen() {
                 try {
                     val nativeLibDir = context.applicationInfo.nativeLibraryDir
                     val prootPath = File(nativeLibDir, "libproot.so").absolutePath
-                    val prootLoaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
-                    
+                    val loaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
+                    val tallocPath = File(nativeLibDir, "libtalloc.so.2").absolutePath
+
                     val pb = ProcessBuilder(
-                        prootPath, 
-                        "--link2symlink", // بسیار مهم برای سازگاری اندروید
-                        "-r", alpinePath, 
-                        "-0", 
-                        "-w", "/",
-                        "-b", "/dev", 
-                        "-b", "/proc", 
-                        "-b", "/sys", 
-                        "-b", "/storage/emulated/0:/sdcard",
-                        "-b", "$prootLoaderPath:/lib/ld-musl-aarch64.so.1",
+                        prootPath, "-r", alpinePath, "-0", "-w", "/",
+                        "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "/storage/emulated/0:/sdcard",
+                        "-b", "$loaderPath:/lib/ld-musl-aarch64.so.1",
+                        "-b", "$tallocPath:/lib/libtalloc.so.2", // اتصال کتابخانه به لینوکس
+                        "--link2symlink",
                         "/bin/sh", "-c", cleanCmd
                     )
                     pb.redirectErrorStream(true)
                     val process = pb.start()
-                    
                     val reader = BufferedReader(InputStreamReader(process.inputStream))
                     val output = StringBuilder()
                     var line: String?
-                    
-                    while (reader.readLine().also { line = it } != null) {
-                        output.append(line).append("\n")
-                    }
+                    while (reader.readLine().also { line = it } != null) { output.append(line).append("\n") }
                     process.waitFor()
                     output.toString().trim()
-                } catch (e: Exception) {
-                    "Error: ${e.message}"
-                }
+                } catch (e: Exception) { "Error: ${e.message}" }
             }
-            
-            if (result.isNotEmpty()) {
-                outputLines.add(result)
-            }
+            if (result.isNotEmpty()) { outputLines.add(result) }
             listState.animateScrollToItem(outputLines.size - 1)
         }
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Color.Black).padding(8.dp)) {
         LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
-            items(outputLines) { line ->
-                Text(text = line, color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
-            }
+            items(outputLines) { line -> Text(text = line, color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp) }
         }
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(text = "root@alpine:~# ", color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
             BasicTextField(
-                value = inputText,
-                onValueChange = { inputText = it },
+                value = inputText, onValueChange = { inputText = it },
                 textStyle = TextStyle(color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp),
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-                enabled = isExtracted,
+                modifier = Modifier.weight(1f), singleLine = true, enabled = isExtracted,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = {
-                    runCommand(inputText)
-                    inputText = ""
-                })
+                keyboardActions = KeyboardActions(onDone = { runCommand(inputText); inputText = "" })
             )
         }
     }

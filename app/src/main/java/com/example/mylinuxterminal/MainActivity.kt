@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v6.8", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v6.9", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -90,12 +90,10 @@ fun TerminalScreen() {
             }
         }
 
-        // 🛠️ ترفند نهایی: استفاده از Files.delete برای پاک کردن خود لینک (نه فایل اصلی)
         try {
             val binDir = File(alpineDir, "bin")
             val shFile = File(binDir, "sh")
             
-            // پاک کردن لینک خراب با روش امن
             if (Files.exists(shFile.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
                 try { Files.delete(shFile.toPath()) } catch (e: Exception) { shFile.delete() }
             }
@@ -156,6 +154,7 @@ fun TerminalScreen() {
                         prootPath,
                         "--kill-on-exit",
                         "--link2symlink",
+                        "--sysvipc", // پرچم جدید برای دور زدن seccomp
                         "-0",
                         "-r", alpinePath,
                         "-w", "/",
@@ -168,7 +167,7 @@ fun TerminalScreen() {
                     val env = pb.environment()
                     env["PROOT_TMP_DIR"] = tmpDir.absolutePath
                     env["PROOT_NO_SECCOMP"] = "1"
-                    env["PROOT_FORCE_FOREIGN_BINARY"] = "1"
+                    env.remove("LD_PRELOAD") // حذف متغیر مزاحم
                     
                     pb.redirectErrorStream(true)
                     val process = pb.start()

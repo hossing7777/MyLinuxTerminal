@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v5.5", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v5.6", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -70,7 +70,21 @@ fun TerminalScreen() {
 
     suspend fun extractLinux() = withContext(Dispatchers.IO) {
         val alpineDir = File(context.filesDir, "alpine")
-        
+        val prootFile = File(context.filesDir, "proot")
+
+        // ۱. کپی کردن PRoot از assets به filesDir (نه jniLibs)
+        if (!prootFile.exists()) {
+            try {
+                context.assets.open("proot").use { input ->
+                    prootFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                prootFile.setExecutable(true, false)
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { outputLines.add("PRoot Copy Error: ${e.toString()}") }
+            }
+        }
+
+        // ۲. استخراج Alpine
         val assets = context.assets.list("") ?: emptyArray()
         val assetName = when {
             assets.contains("alpine.tar.gz") -> "alpine.tar.gz"
@@ -109,13 +123,15 @@ fun TerminalScreen() {
         coroutineScope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
-                    val prootPath = File(context.applicationInfo.nativeLibraryDir, "libproot.so").absolutePath
+                    // استفاده از فایل اجرایی proot در filesDir
+                    val prootPath = File(context.filesDir, "proot").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
                     val tmpDir = File(context.cacheDir, "proot_tmp")
                     if (!tmpDir.exists()) tmpDir.mkdirs()
 
                     val pb = ProcessBuilder(
                         prootPath,
+                        "--kill-on-exit",
                         "--link2symlink",
                         "-0",
                         "-r", alpinePath,

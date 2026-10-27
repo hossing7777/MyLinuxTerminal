@@ -54,39 +54,41 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v5.2", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v5.3", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
-    // تابع کپی کردن کل متن‌ها
     fun copyAllText() {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val clip = ClipData.newPlainText("Terminal Output", outputLines.joinToString("\n"))
         clipboard.setPrimaryClip(clip)
-        outputLines.add("--- All text copied to clipboard ---")
+        outputLines.add("--- All text copied ---")
     }
 
     suspend fun extractLinux() = withContext(Dispatchers.IO) {
         val alpineDir = File(context.filesDir, "alpine")
         
+        // ۱. عیب‌یابی: چاپ لیست فایل‌های داخل assets
+        val assetList = context.assets.list("")?.joinToString(", ") ?: "Empty"
+        withContext(Dispatchers.Main) { outputLines.add("Assets list: [$assetList]") }
+
         if (!alpineDir.exists() || alpineDir.listFiles()?.isEmpty() == true) {
             try {
                 alpineDir.mkdirs()
                 context.assets.open("alpine.tar.gz").use { input -> 
                     extractTarGz(input, alpineDir) 
                 }
+                withContext(Dispatchers.Main) { outputLines.add("Extraction successful!") }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { outputLines.add("Alpine Extract Error: ${e.toString()}") }
+                withContext(Dispatchers.Main) { outputLines.add("Extract Error: ${e.toString()}") }
             }
         }
 
         withContext(Dispatchers.Main) {
             isExtracted = true
-            outputLines.add("Alpine Linux initialized successfully!")
-            outputLines.add("Try: 'cat /etc/os-release' or 'apk add python3'")
             listState.animateScrollToItem(outputLines.size - 1)
             focusRequester.requestFocus()
             keyboardController?.show()
@@ -115,6 +117,8 @@ fun TerminalScreen() {
                         "/bin/sh", "-c", cleanCmd
                     )
                     pb.environment()["PROOT_TMP_DIR"] = tmpDir.absolutePath
+                    pb.environment()["PROOT_NO_SECCOMP"] = "1" // جلوگیری از کرش در برخی گوشی‌ها
+                    
                     pb.redirectErrorStream(true)
                     val process = pb.start()
                     
@@ -132,7 +136,6 @@ fun TerminalScreen() {
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Color.Black).padding(8.dp)) {
-        // هدر برای دکمه کپی
         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.End) {
             TextButton(onClick = { copyAllText() }) {
                 Text("Copy All", color = Color.Cyan, fontSize = 12.sp)
@@ -142,12 +145,7 @@ fun TerminalScreen() {
         LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
             items(outputLines) { line -> 
                 SelectionContainer {
-                    Text(
-                        text = line, 
-                        color = Color.Green, 
-                        fontFamily = FontFamily.Monospace, 
-                        fontSize = 14.sp
-                    ) 
+                    Text(text = line, color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp) 
                 }
             }
         }

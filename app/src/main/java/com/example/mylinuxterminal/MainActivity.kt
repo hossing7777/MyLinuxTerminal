@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v5.3", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v5.4", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -71,15 +71,19 @@ fun TerminalScreen() {
     suspend fun extractLinux() = withContext(Dispatchers.IO) {
         val alpineDir = File(context.filesDir, "alpine")
         
-        // ۱. عیب‌یابی: چاپ لیست فایل‌های داخل assets
-        val assetList = context.assets.list("")?.joinToString(", ") ?: "Empty"
-        withContext(Dispatchers.Main) { outputLines.add("Assets list: [$assetList]") }
+        // پیدا کردن نام دقیق فایل در assets
+        val assets = context.assets.list("") ?: emptyArray()
+        val assetName = when {
+            assets.contains("alpine.tar.gz") -> "alpine.tar.gz"
+            assets.contains("alpine.tar") -> "alpine.tar"
+            else -> "alpine.tar.gz" // پیش‌فرض
+        }
 
         if (!alpineDir.exists() || alpineDir.listFiles()?.isEmpty() == true) {
             try {
                 alpineDir.mkdirs()
-                context.assets.open("alpine.tar.gz").use { input -> 
-                    extractTarGz(input, alpineDir) 
+                context.assets.open(assetName).use { input -> 
+                    extractTarSmart(input, alpineDir) 
                 }
                 withContext(Dispatchers.Main) { outputLines.add("Extraction successful!") }
             } catch (e: Exception) {
@@ -117,7 +121,7 @@ fun TerminalScreen() {
                         "/bin/sh", "-c", cleanCmd
                     )
                     pb.environment()["PROOT_TMP_DIR"] = tmpDir.absolutePath
-                    pb.environment()["PROOT_NO_SECCOMP"] = "1" // جلوگیری از کرش در برخی گوشی‌ها
+                    pb.environment()["PROOT_NO_SECCOMP"] = "1"
                     
                     pb.redirectErrorStream(true)
                     val process = pb.start()
@@ -170,47 +174,64 @@ fun TerminalScreen() {
     }
 }
 
-fun extractTarGz(inputStream: InputStream, destDir: File) {
-    GzipCompressorInputStream(inputStream).use { gzipIn ->
-        TarArchiveInputStream(gzipIn).use { tarIn ->
-            var entry: TarArchiveEntry? = tarIn.nextEntry
-            while (entry != null) {
-                try {
-                    val destFile = File(destDir, entry.name)
-                    if (!destFile.canonicalPath.startsWith(destDir.canonicalPath + File.separator)) {
-                        entry = tarIn.nextEntry
-                        continue
-                    }
-                    if (entry.isDirectory) {
-                        destFile.mkdirs()
-                    } else if (entry.isSymbolicLink) {
-                        if (!destFile.exists()) {
-                            Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName))
-                        }
-                    } else {
-                        destFile.parentFile?.mkdirs()
-                        destFile.outputStream().use { output -> tarIn.copyTo(output) }
-                        
-                        if (entry.mode != 0) {
-                            try {
-                                val octal = Integer.toOctalString(entry.mode).takeLast(3)
-                                val perms = buildString {
-                                    for (c in octal) {
-                                        val v = Character.digit(c, 8)
-                                        append(if (v and 4 != 0) "r" else "-")
-                                        append(if (v and 2 != 0) "w" else "-")
-                                        append(if (v and 1 != 0) "x" else "-")
-                                    }
-                                }
-                                Files.setPosixFilePermissions(Paths.get(destFile.absolutePath), PosixFilePermissions.fromString(perms))
-                            } catch (e: Exception) { }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("Terminal", "Error extracting ${entry.name}", e)
-                }
-                entry = tarIn.nextEntry
-            }
+// تابع هوشمند برای تشخیص فایل فشرده یا خام
+fun extractTarSmart(inputStream: InputStream, destDir: File) {
+    val bufferedInputStream = BufferedInputStream(inputStream)
+    bufferedInputStream.mark(2)
+    val signature = ByteArray(2)
+    bufferedInputStream.read(signature)
+    bufferedInputStream.reset()
+
+    // بررسی امضای Gzip (1f 8b)
+    val isGzip = signature[0] == 0x1f.toByte() && signature[1] == 0x8b.toByte()
+
+    if (isGzip) {
+        GzipCompressorInputStream(bufferedInputStream).use { gzipIn ->
+            TarArchiveInputStream(gzipIn).use { tarIn -> extractEntries(tarIn, destDir) }
         }
+    } else {
+        TarArchiveInputStream(bufferedInputStream).use { tarIn -> extractEntries(tarIn, destDir) }
+    }
+}
+
+// تابع استخراج تک‌تک فایل‌ها
+fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
+    var entry: TarArchiveEntry? = tarIn.nextEntry
+    while (entry != null) {
+        try {
+            val destFile = File(destDir, entry.name)
+            if (!destFile.canonicalPath.startsWith(destDir.canonicalPath + File.separator)) {
+                entry = tarIn.nextEntry
+                continue
+            }
+            if (entry.isDirectory) {
+                destFile.mkdirs()
+            } else if (entry.isSymbolicLink) {
+                if (!destFile.exists()) {
+                    Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName))
+                }
+            } else {
+                destFile.parentFile?.mkdirs()
+                destFile.outputStream().use { output -> tarIn.copyTo(output) }
+                
+                if (entry.mode != 0) {
+                    try {
+                        val octal = Integer.toOctalString(entry.mode).takeLast(3)
+                        val perms = buildString {
+                            for (c in octal) {
+                                val v = Character.digit(c, 8)
+                                append(if (v and 4 != 0) "r" else "-")
+                                append(if (v and 2 != 0) "w" else "-")
+                                append(if (v and 1 != 0) "x" else "-")
+                            }
+                        }
+                        Files.setPosixFilePermissions(Paths.get(destFile.absolutePath), PosixFilePermissions.fromString(perms))
+                    } catch (e: Exception) { }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("Terminal", "Error extracting ${entry.name}", e)
+        }
+        entry = tarIn.nextEntry
     }
 }

@@ -7,9 +7,13 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.8" }
-    packaging { jniLibs { useLegacyPackaging = true } }
+    packaging { 
+        jniLibs { 
+            useLegacyPackaging = true 
+        } 
+    }
     androidResources { 
-        noCompress += listOf("tar", "gz", "tar.gz") // جلوگیری از باز کردن فایل
+        noCompress += listOf("tar", "gz", "tar.gz") 
     }
 }
 dependencies {

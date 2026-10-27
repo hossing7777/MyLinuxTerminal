@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v5.7", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v6.0", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -70,32 +70,8 @@ fun TerminalScreen() {
 
     suspend fun extractLinux() = withContext(Dispatchers.IO) {
         val alpineDir = File(context.filesDir, "alpine")
-        val prootFile = File(context.filesDir, "proot")
-
-        // ۱. کپی کردن PRoot از assets به filesDir
-        if (!prootFile.exists()) {
-            try {
-                context.assets.open("proot").use { input ->
-                    prootFile.outputStream().use { output -> input.copyTo(output) }
-                }
-                prootFile.setExecutable(true, false)
-            } catch (e: Exception) {
-                // اگر در assets نبود، از nativeLib کپی کن
-                try {
-                    val nativeLibProot = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
-                    if (nativeLibProot.exists()) {
-                        nativeLibProot.copyTo(prootFile, overwrite = true)
-                        prootFile.setExecutable(true, false)
-                    } else {
-                        withContext(Dispatchers.Main) { outputLines.add("PRoot Copy Error: neither assets nor nativeLib found") }
-                    }
-                } catch (ex: Exception) {
-                    withContext(Dispatchers.Main) { outputLines.add("PRoot Copy Error: ${e.toString()}") }
-                }
-            }
-        }
-
-        // ۲. استخراج Alpine
+        
+        // پیدا کردن فایل لینوکس در assets
         val assets = context.assets.list("") ?: emptyArray()
         val assetName = when {
             assets.contains("alpine.tar.gz") -> "alpine.tar.gz"
@@ -134,10 +110,11 @@ fun TerminalScreen() {
         coroutineScope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
-                    val prootPath = File(context.filesDir, "proot").absolutePath
+                    // اجرای PRoot از پوشه nativeLibraryDir
+                    val prootPath = File(context.applicationInfo.nativeLibraryDir, "libproot.so").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
                     
-                    // ⬇️ تغییر مهم: استفاده از filesDir به جای cacheDir برای پوشه موقت
+                    // پوشه موقت در filesDir (قابل نوشتن)
                     val tmpDir = File(context.filesDir, "tmp")
                     if (!tmpDir.exists()) tmpDir.mkdirs()
 

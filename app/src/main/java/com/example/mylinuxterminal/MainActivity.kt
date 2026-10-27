@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v6.6", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v6.7", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -90,34 +90,39 @@ fun TerminalScreen() {
             }
         }
 
-        // 🛠️ ترفند نهایی: حذف لینک‌های خراب و کپی دستی فایل‌های حیاتی
+        // 🛠️ ترفند نهایی: اصلاح ساختار لینوکس بعد از استخراج
         try {
-            val shFile = File(alpineDir, "bin/sh")
-            // اگر فایل وجود دارد (چه لینک خراب باشد چه فایل)، آن را به زور پاک می‌کنیم
-            if (Files.exists(shFile.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-                Files.delete(shFile.toPath())
-            }
-
-            val busybox = File(alpineDir, "bin/busybox")
+            val binDir = File(alpineDir, "bin")
+            val usrBinDir = File(alpineDir, "usr/bin")
+            
+            // پیدا کردن busybox
+            val busybox = if (File(binDir, "busybox").exists()) File(binDir, "busybox") else File(usrBinDir, "busybox")
             if (busybox.exists()) {
+                val shFile = File(binDir, "sh")
+                if (shFile.exists()) shFile.delete() // پاک کردن لینک خراب
                 busybox.copyTo(shFile, overwrite = true)
                 shFile.setExecutable(true)
             }
 
-            val ldMusl = File(alpineDir, "lib/ld-musl-aarch64.so.1")
-            if (Files.exists(ldMusl.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-                Files.delete(ldMusl.toPath())
-            }
-
-            val libcMusl = File(alpineDir, "lib/libc.musl-aarch64.so.1")
-            if (libcMusl.exists()) {
-                libcMusl.copyTo(ldMusl, overwrite = true)
+            val libDir = File(alpineDir, "lib")
+            val usrLibDir = File(alpineDir, "usr/lib")
+            
+            // پیدا کردن libc
+            val libc = if (File(libDir, "libc.musl-aarch64.so.1").exists()) File(libDir, "libc.musl-aarch64.so.1") else File(usrLibDir, "libc.musl-aarch64.so.1")
+            if (libc.exists()) {
+                val ldMusl = File(libDir, "ld-musl-aarch64.so.1")
+                if (ldMusl.exists()) ldMusl.delete()
+                libc.copyTo(ldMusl, overwrite = true)
                 ldMusl.setExecutable(true)
             }
             
-            // ساخت پوشه tmp داخل Alpine
             val tmpDir = File(alpineDir, "tmp")
             if (!tmpDir.exists()) tmpDir.mkdirs()
+
+            // چاپ وضعیت برای عیب‌یابی
+            withContext(Dispatchers.Main) { 
+                outputLines.add("Debug: sh size = ${File(binDir, "sh").length()} bytes") 
+            }
             
         } catch (e: Exception) {
             withContext(Dispatchers.Main) { outputLines.add("Fix Error: ${e.toString()}") }
@@ -144,8 +149,6 @@ fun TerminalScreen() {
                 try {
                     val prootPath = File(context.applicationInfo.nativeLibraryDir, "libproot.so").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
-                    
-                    // ⬇️ انتقال پوشه موقت به داخل Alpine برای جلوگیری از خطای chmod
                     val tmpDir = File(alpinePath, "tmp")
 
                     val pb = ProcessBuilder(
@@ -164,6 +167,7 @@ fun TerminalScreen() {
                     val env = pb.environment()
                     env["PROOT_TMP_DIR"] = tmpDir.absolutePath
                     env["PROOT_NO_SECCOMP"] = "1"
+                    env["PROOT_FORCE_FOREIGN_BINARY"] = "1" // دور زدن محدودیت اجرا
                     
                     pb.redirectErrorStream(true)
                     val process = pb.start()
@@ -246,14 +250,11 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
             if (entry.isDirectory) {
                 destFile.mkdirs()
             } else if (entry.isSymbolicLink) {
-                // سعی در ساخت لینک، و در صورت خطا نادیده گرفتن (چون در مرحله بعد به زور کپی می‌کنیم)
-                if (!Files.exists(destFile.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-                    try {
-                        Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName))
-                    } catch (e: Exception) {
-                        // در صورت خطا (مثل اندروید ۱۰)، یک فایل خالی می‌سازیم تا بعدا اصلاح شود
-                        destFile.createNewFile()
-                    }
+                // ⬇️ رفع باگ بزرگ: اگر ساخت لینک ممکن نبود، هیچ فایلی نساز تا پوشه‌ها سالم بمانند
+                try {
+                    Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName))
+                } catch (e: Exception) {
+                    Log.e("Terminal", "Symlink failed, ignoring: ${entry.name}")
                 }
             } else {
                 destFile.parentFile?.mkdirs()

@@ -13,6 +13,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.ExperimentalComposeUiApi // <--- اضافه شد
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -33,7 +34,7 @@ import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import java.io.*
 import java.nio.file.Files
 import java.nio.file.Paths
-import java.nio.file.attribute.PosixFilePermissions // <--- این خط اضافه شد
+import java.nio.file.attribute.PosixFilePermissions
 import java.util.zip.ZipInputStream
 
 class MainActivity : ComponentActivity() {
@@ -43,12 +44,13 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class) // <--- اضافه شد برای رفع خطای Experimental
 @Composable
 fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v4.1", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v4.2", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -184,14 +186,20 @@ fun extractTarGz(inputStream: InputStream, destDir: File) {
                 } else {
                     destFile.parentFile?.mkdirs()
                     destFile.outputStream().use { output -> tarIn.copyTo(output) }
+                    
+                    // اصلاح منطق اعمال دسترسی‌ها (Permissions) برای لینوکس
                     if (entry.mode != 0) {
                         try {
-                            val permissions = PosixFilePermissions.fromString(
-                                Integer.toOctalString(entry.mode).takeLast(4).padStart(4, '0')
-                                    .map { if (it == '7' || it == '5' || it == '3' || it == '1') 'r' else '-' }
-                                    .zip("rwxrwxrwx".toList()).joinToString("") { (p, t) -> if (p != '-') t else '-' }
-                            )
-                            Files.setPosixFilePermissions(Paths.get(destFile.absolutePath), permissions)
+                            val octal = Integer.toOctalString(entry.mode).takeLast(3)
+                            val perms = buildString {
+                                for (c in octal) {
+                                    val v = Character.digit(c, 8)
+                                    append(if (v and 4 != 0) "r" else "-")
+                                    append(if (v and 2 != 0) "w" else "-")
+                                    append(if (v and 1 != 0) "x" else "-")
+                                }
+                            }
+                            Files.setPosixFilePermissions(Paths.get(destFile.absolutePath), PosixFilePermissions.fromString(perms))
                         } catch (e: Exception) { }
                     }
                 }

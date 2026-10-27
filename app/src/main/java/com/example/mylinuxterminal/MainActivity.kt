@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.5", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.6", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -90,7 +90,6 @@ fun TerminalScreen() {
             }
         }
 
-        // 🛠️ ترفند نهایی: بازسازی ساختار و ساخت دستی دستورات
         fixAlpineStructure(alpineDir)
 
         val shFile = File(alpineDir, "bin/sh")
@@ -143,6 +142,12 @@ fun TerminalScreen() {
                     env["PROOT_NO_SECCOMP"] = "1"
                     env["PROOT_LOADER"] = loaderPath
                     env["LD_LIBRARY_PATH"] = nativeLibDir
+                    
+                    // 👇 خطوط جادویی: تنظیم متغیرهای محیطی لینوکس
+                    env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                    env["HOME"] = "/root"
+                    env["TERM"] = "xterm-256color"
+                    
                     env.remove("LD_PRELOAD")
                     
                     pb.redirectErrorStream(true)
@@ -196,21 +201,17 @@ fun TerminalScreen() {
     }
 }
 
-// تابع بازسازی ساختار پوشه‌ها و ساخت دستی دستورات
 fun fixAlpineStructure(alpineDir: File) {
     try {
         val binDir = File(alpineDir, "bin")
         val usrBinDir = File(alpineDir, "usr/bin")
         val libDir = File(alpineDir, "lib")
-        val usrLibDir = File(alpineDir, "usr/lib")
-
-        // ۱. اطمینان از اینکه پوشه‌ها واقعی هستند (نه لینک خراب)
+        
         if (binDir.exists() && !binDir.isDirectory) binDir.delete()
         binDir.mkdirs()
         if (usrBinDir.exists() && !usrBinDir.isDirectory) usrBinDir.delete()
         usrBinDir.mkdirs()
 
-        // ۲. پیدا کردن فایل اصلی busybox
         var busybox = File(binDir, "busybox")
         if (!busybox.exists() || busybox.length() < 100000L) {
             val usrBusybox = File(usrBinDir, "busybox")
@@ -219,7 +220,6 @@ fun fixAlpineStructure(alpineDir: File) {
             }
         }
 
-        // ۳. کپی اجباری تمام دستورات از روی busybox (حتی اگر به عنوان لینک وجود داشته باشند)
         if (busybox.exists() && busybox.length() > 100000L) {
             val applets = listOf(
                 "sh", "ls", "cat", "echo", "pwd", "mkdir", "rm", "cp", "mv", 
@@ -229,13 +229,11 @@ fun fixAlpineStructure(alpineDir: File) {
             )
             
             for (applet in applets) {
-                // ساخت در /bin
                 val appletBin = File(binDir, applet)
                 try { appletBin.delete() } catch (e: Exception) {}
                 busybox.copyTo(appletBin, overwrite = true)
                 appletBin.setExecutable(true)
 
-                // ساخت در /usr/bin
                 val appletUsrBin = File(usrBinDir, applet)
                 try { appletUsrBin.delete() } catch (e: Exception) {}
                 busybox.copyTo(appletUsrBin, overwrite = true)
@@ -243,7 +241,6 @@ fun fixAlpineStructure(alpineDir: File) {
             }
         }
 
-        // ۴. اصلاح لودر لینوکس (ld-musl)
         if (libDir.exists() && !libDir.isDirectory) libDir.delete()
         libDir.mkdirs()
         
@@ -259,6 +256,9 @@ fun fixAlpineStructure(alpineDir: File) {
 
         val tmpDir = File(alpineDir, "tmp")
         if (!tmpDir.exists()) tmpDir.mkdirs()
+        
+        val rootDir = File(alpineDir, "root")
+        if (!rootDir.exists()) rootDir.mkdirs()
 
     } catch (e: Exception) {
         Log.e("Terminal", "Fix structure error", e)
@@ -298,7 +298,6 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
                 try {
                     Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName))
                 } catch (e: Exception) {
-                    // اگر لینک ساخته نشد، اصلا مهم نیست چون تابع fixAlpineStructure همه چیز را به زور کپی می‌کند
                 }
             } else {
                 destFile.parentFile?.mkdirs()

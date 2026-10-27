@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.2", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.3", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -90,41 +90,12 @@ fun TerminalScreen() {
             }
         }
 
-        try {
-            val binDir = File(alpineDir, "bin")
-            val shFile = File(binDir, "sh")
-            
-            if (Files.exists(shFile.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-                try { Files.delete(shFile.toPath()) } catch (e: Exception) { shFile.delete() }
-            }
+        // 🛠️ ترفند نهایی: بازسازی ساختار پوشه‌ها بعد از استخراج
+        fixAlpineStructure(alpineDir)
 
-            val busybox = if (File(binDir, "busybox").exists()) File(binDir, "busybox") else File(alpineDir, "usr/bin/busybox")
-            if (busybox.exists()) {
-                busybox.copyTo(shFile, overwrite = true)
-                shFile.setExecutable(true)
-            }
-
-            val libDir = File(alpineDir, "lib")
-            val ldMusl = File(libDir, "ld-musl-aarch64.so.1")
-            if (Files.exists(ldMusl.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-                try { Files.delete(ldMusl.toPath()) } catch (e: Exception) { ldMusl.delete() }
-            }
-
-            val libc = if (File(libDir, "libc.musl-aarch64.so.1").exists()) File(libDir, "libc.musl-aarch64.so.1") else File(alpineDir, "usr/lib/libc.musl-aarch64.so.1")
-            if (libc.exists()) {
-                libc.copyTo(ldMusl, overwrite = true)
-                ldMusl.setExecutable(true)
-            }
-            
-            val tmpDir = File(alpineDir, "tmp")
-            if (!tmpDir.exists()) tmpDir.mkdirs()
-
-            withContext(Dispatchers.Main) { 
-                outputLines.add("Debug: sh size = ${shFile.length()} bytes") 
-            }
-            
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) { outputLines.add("Fix Error: ${e.toString()}") }
+        val shFile = File(alpineDir, "bin/sh")
+        withContext(Dispatchers.Main) { 
+            outputLines.add("Debug: sh size = ${shFile.length()} bytes") 
         }
 
         withContext(Dispatchers.Main) {
@@ -170,10 +141,8 @@ fun TerminalScreen() {
                     env["PROOT_TMP_DIR"] = tmpDir.absolutePath
                     env["PROOT_NO_SECCOMP"] = "1"
                     env["PROOT_LOADER"] = loaderPath
+                    env["LD_LIBRARY_PATH"] = nativeLibDir
                     env.remove("LD_PRELOAD")
-                    
-                    // 👇 خط جادویی: به اندروید می‌گوییم کتابخانه‌های جانبی را کجا پیدا کند
-                    env["LD_LIBRARY_PATH"] = nativeLibDir 
                     
                     pb.redirectErrorStream(true)
                     val process = pb.start()
@@ -223,6 +192,81 @@ fun TerminalScreen() {
                 })
             )
         }
+    }
+}
+
+// تابع بازسازی ساختار پوشه‌ها (جایگزین لینک‌های ناموفق)
+fun fixAlpineStructure(alpineDir: File) {
+    try {
+        // ۱. ساخت پوشه bin و کپی کردن محتویات usr/bin به آن
+        val binDir = File(alpineDir, "bin")
+        val usrBinDir = File(alpineDir, "usr/bin")
+        if (!binDir.isDirectory && usrBinDir.isDirectory) {
+            if (binDir.exists()) binDir.delete()
+            binDir.mkdirs()
+            usrBinDir.listFiles()?.forEach { file ->
+                if (file.isFile) {
+                    val dest = File(binDir, file.name)
+                    if (!dest.exists()) file.copyTo(dest, overwrite = true)
+                    dest.setExecutable(true)
+                }
+            }
+        }
+
+        // ۲. ساخت پوشه lib و کپی کردن محتویات usr/lib به آن
+        val libDir = File(alpineDir, "lib")
+        val usrLibDir = File(alpineDir, "usr/lib")
+        if (!libDir.isDirectory && usrLibDir.isDirectory) {
+            if (libDir.exists()) libDir.delete()
+            libDir.mkdirs()
+            usrLibDir.listFiles()?.forEach { file ->
+                if (file.isFile) {
+                    val dest = File(libDir, file.name)
+                    if (!dest.exists()) file.copyTo(dest, overwrite = true)
+                }
+            }
+        }
+
+        // ۳. ساخت پوشه sbin
+        val sbinDir = File(alpineDir, "sbin")
+        val usrSbinDir = File(alpineDir, "usr/sbin")
+        if (!sbinDir.isDirectory && usrSbinDir.isDirectory) {
+            if (sbinDir.exists()) sbinDir.delete()
+            sbinDir.mkdirs()
+            usrSbinDir.listFiles()?.forEach { file ->
+                if (file.isFile) {
+                    val dest = File(sbinDir, file.name)
+                    if (!dest.exists()) file.copyTo(dest, overwrite = true)
+                    dest.setExecutable(true)
+                }
+            }
+        }
+
+        // ۴. اطمینان از وجود فایل شل (sh) به صورت فیزیکی
+        val shFile = File(alpineDir, "bin/sh")
+        if (!shFile.exists() || shFile.length() == 0L) {
+            val busybox = File(alpineDir, "bin/busybox")
+            if (busybox.exists()) {
+                busybox.copyTo(shFile, overwrite = true)
+                shFile.setExecutable(true)
+            }
+        }
+
+        // ۵. اطمینان از وجود لودر لینوکس (ld-musl) به صورت فیزیکی
+        val ldMusl = File(alpineDir, "lib/ld-musl-aarch64.so.1")
+        if (!ldMusl.exists() || ldMusl.length() == 0L) {
+            val libc = File(alpineDir, "lib/libc.musl-aarch64.so.1")
+            if (libc.exists()) {
+                libc.copyTo(ldMusl, overwrite = true)
+                ldMusl.setExecutable(true)
+            }
+        }
+
+        val tmpDir = File(alpineDir, "tmp")
+        if (!tmpDir.exists()) tmpDir.mkdirs()
+
+    } catch (e: Exception) {
+        Log.e("Terminal", "Fix structure error", e)
     }
 }
 

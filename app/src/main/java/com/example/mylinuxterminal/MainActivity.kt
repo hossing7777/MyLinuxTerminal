@@ -42,7 +42,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v3.0", "Extracting Alpine Linux... Please wait.") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v3.1", "Extracting Alpine Linux... Please wait.") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
 
@@ -51,7 +51,6 @@ fun TerminalScreen() {
         if (!alpineDir.exists() || alpineDir.listFiles()?.isEmpty() == true) {
             try {
                 alpineDir.mkdirs()
-                // استفاده از کتابخانه برای استخراج به جای دستور tar سیستم
                 context.assets.open("alpine.tar.gz").use { input ->
                     GzipCompressorInputStream(input).use { gzipIn ->
                         TarArchiveInputStream(gzipIn).use { tarIn ->
@@ -64,7 +63,7 @@ fun TerminalScreen() {
                                     file.parentFile?.mkdirs()
                                     file.outputStream().use { output -> tarIn.copyTo(output) }
                                 }
-                                tarIn.closeEntry()
+                                // خط closeEntry حذف شد
                                 entry = tarIn.nextEntry
                             }
                         }
@@ -96,7 +95,6 @@ fun TerminalScreen() {
                     val prootPath = File(nativeLibDir, "libproot.so").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
 
-                    // چون PRoot استاتیک است، نیازی به لودر و talloc ندارد
                     val pb = ProcessBuilder(
                         prootPath, "-r", alpinePath, "-0", "-w", "/",
                         "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "/storage/emulated/0:/sdcard",

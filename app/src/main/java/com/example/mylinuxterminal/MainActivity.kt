@@ -8,6 +8,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
@@ -54,9 +56,12 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    var currentDir by remember { mutableStateOf("/root") } // مسیر پیش‌فرض لینوکس
+    var currentDir by remember { mutableStateOf("/root") }
     
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.7", "Initializing...") }
+    // 👇 متغیر جدید برای اندازه فونت
+    var fontSize by remember { mutableStateOf(14.sp) }
+    
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.8", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -120,7 +125,6 @@ fun TerminalScreen() {
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
                     val tmpDir = File(alpinePath, "tmp")
 
-                    // 👇 اجرای دستور در مسیر فعلی و چاپ مسیر جدید در انتها
                     val fullCmd = "cd \"$currentDir\" 2>/dev/null; $cleanCmd; echo \"__PWD__\"; pwd"
 
                     val pb = ProcessBuilder(
@@ -156,15 +160,14 @@ fun TerminalScreen() {
                     while (reader.readLine().also { line = it } != null) { output.append(line).append("\n") }
                     process.waitFor()
                     
-                    // پردازش خروجی برای پیدا کردن مسیر جدید
                     val rawOutput = output.toString().trim()
                     val lines = rawOutput.lines()
                     var newDir = currentDir
                     val displayOutput = mutableListOf<String>()
 
                     if (lines.size >= 2 && lines[lines.size - 2] == "__PWD__") {
-                        newDir = lines.last() // مسیر جدید
-                        displayOutput.addAll(lines.dropLast(2)) // حذف خطوط کمکی
+                        newDir = lines.last() 
+                        displayOutput.addAll(lines.dropLast(2)) 
                     } else {
                         displayOutput.addAll(lines)
                     }
@@ -175,11 +178,9 @@ fun TerminalScreen() {
                 }
             }
             
-            // آپدیت مسیر فعلی
             if (result.first != currentDir && result.first.isNotEmpty()) {
                 currentDir = result.first
             }
-            // نمایش خروجی دستور
             if (result.second.isNotEmpty()) { 
                 outputLines.add(result.second) 
             }
@@ -194,21 +195,46 @@ fun TerminalScreen() {
             }
         }
         
-        LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
+        // 👇 اعمال قابلیت زوم روی بخش نمایش متن‌ها (LazyColumn)
+        LazyColumn(
+            state = listState, 
+            modifier = Modifier
+                .weight(1f)
+                .pointerInput(Unit) {
+                    detectTransformGestures { _, _, zoom, _ ->
+                        // محدود کردن زوم بین 8 تا 36 اس‌پی
+                        val newSize = fontSize.value * zoom
+                        fontSize = newSize.coerceIn(8f, 36f).sp
+                    }
+                }
+        ) {
             items(outputLines) { line -> 
                 SelectionContainer {
-                    Text(text = line, color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp) 
+                    Text(
+                        text = line, 
+                        color = Color.Green, 
+                        fontFamily = FontFamily.Monospace, 
+                        fontSize = fontSize // 👈 اعمال سایز داینامیک
+                    ) 
                 }
             }
         }
         
         Row(modifier = Modifier.fillMaxWidth()) {
-            // پرامپت داینامیک که مسیر فعلی را نشان می‌دهد
-            Text(text = "root@alpine:$currentDir# ", color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
+            Text(
+                text = "root@alpine:$currentDir# ", 
+                color = Color.Green, 
+                fontFamily = FontFamily.Monospace, 
+                fontSize = fontSize // 👈 پرامپت هم با زوم بزرگ/کوچک می‌شود
+            )
             BasicTextField(
                 value = inputText, 
                 onValueChange = { inputText = it },
-                textStyle = TextStyle(color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp),
+                textStyle = TextStyle(
+                    color = Color.Green, 
+                    fontFamily = FontFamily.Monospace, 
+                    fontSize = fontSize // 👈 متن ورودی هم با زوم تغییر می‌کند
+                ),
                 modifier = Modifier.weight(1f).focusRequester(focusRequester),
                 singleLine = true, 
                 enabled = isExtracted,

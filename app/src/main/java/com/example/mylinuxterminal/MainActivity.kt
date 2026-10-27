@@ -1,6 +1,7 @@
 package com.example.mylinuxterminal
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -13,7 +14,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.ui.ExperimentalComposeUiApi // <--- اضافه شد
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -35,7 +36,6 @@ import java.io.*
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.nio.file.attribute.PosixFilePermissions
-import java.util.zip.ZipInputStream
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,13 +44,13 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalComposeUiApi::class) // <--- اضافه شد برای رفع خطای Experimental
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v4.2", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v4.3", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -61,26 +61,30 @@ fun TerminalScreen() {
         val binDir = File(context.filesDir, "bin")
         val alpineDir = File(context.filesDir, "alpine")
         
+        // ۱. استخراج PRoot از assets
         val prootFile = File(binDir, "proot")
         if (!prootFile.exists()) {
             try {
                 binDir.mkdirs()
-                context.applicationInfo.splitSourceDirs?.forEach { split ->
-                    extractSpecificFileFromApk(split, "lib/arm64-v8a/libproot.so", prootFile)
-                } ?: extractSpecificFileFromApk(context.applicationInfo.sourceDir, "lib/arm64-v8a/libproot.so", prootFile)
-                
-                if (prootFile.exists()) prootFile.setExecutable(true, false)
+                context.assets.open("proot").use { input ->
+                    prootFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                prootFile.setExecutable(true, false)
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { outputLines.add("PRoot Extract Error: ${e.message}") }
+                withContext(Dispatchers.Main) { outputLines.add("PRoot Extract Error: ${e.toString()}") }
             }
         }
 
+        // ۲. استخراج Alpine Linux
         if (!alpineDir.exists() || alpineDir.listFiles()?.isEmpty() == true) {
             try {
                 alpineDir.mkdirs()
-                context.assets.open("alpine.tar.gz").use { input -> extractTarGz(input, alpineDir) }
+                context.assets.open("alpine.tar.gz").use { input -> 
+                    extractTarGz(input, alpineDir) 
+                }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { outputLines.add("Alpine Extraction Error: ${e.message}") }
+                // چاپ خطای دقیق
+                withContext(Dispatchers.Main) { outputLines.add("Alpine Extract Error: ${e.toString()}") }
             }
         }
 
@@ -122,7 +126,7 @@ fun TerminalScreen() {
                     while (reader.readLine().also { line = it } != null) { output.append(line).append("\n") }
                     process.waitFor()
                     output.toString().trim()
-                } catch (e: Exception) { "Error: ${e.message}" }
+                } catch (e: Exception) { "Error: ${e.toString()}" }
             }
             if (result.isNotEmpty()) { outputLines.add(result) }
             listState.animateScrollToItem(outputLines.size - 1)
@@ -155,53 +159,44 @@ fun TerminalScreen() {
     }
 }
 
-fun extractSpecificFileFromApk(apkPath: String, fileName: String, destFile: File) {
-    ZipInputStream(FileInputStream(apkPath)).use { zis ->
-        var entry = zis.nextEntry
-        while (entry != null) {
-            if (entry.name == fileName) {
-                destFile.outputStream().use { output -> zis.copyTo(output) }
-                zis.closeEntry()
-                return
-            }
-            entry = zis.nextEntry
-        }
-    }
-}
-
 fun extractTarGz(inputStream: InputStream, destDir: File) {
     GzipCompressorInputStream(inputStream).use { gzipIn ->
         TarArchiveInputStream(gzipIn).use { tarIn ->
             var entry: TarArchiveEntry? = tarIn.nextEntry
             while (entry != null) {
-                val destFile = File(destDir, entry.name)
-                if (!destFile.canonicalPath.startsWith(destDir.canonicalPath + File.separator)) {
-                    entry = tarIn.nextEntry
-                    continue
-                }
-                if (entry.isDirectory) {
-                    destFile.mkdirs()
-                } else if (entry.isSymbolicLink) {
-                    Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName))
-                } else {
-                    destFile.parentFile?.mkdirs()
-                    destFile.outputStream().use { output -> tarIn.copyTo(output) }
-                    
-                    // اصلاح منطق اعمال دسترسی‌ها (Permissions) برای لینوکس
-                    if (entry.mode != 0) {
-                        try {
-                            val octal = Integer.toOctalString(entry.mode).takeLast(3)
-                            val perms = buildString {
-                                for (c in octal) {
-                                    val v = Character.digit(c, 8)
-                                    append(if (v and 4 != 0) "r" else "-")
-                                    append(if (v and 2 != 0) "w" else "-")
-                                    append(if (v and 1 != 0) "x" else "-")
-                                }
-                            }
-                            Files.setPosixFilePermissions(Paths.get(destFile.absolutePath), PosixFilePermissions.fromString(perms))
-                        } catch (e: Exception) { }
+                try {
+                    val destFile = File(destDir, entry.name)
+                    if (!destFile.canonicalPath.startsWith(destDir.canonicalPath + File.separator)) {
+                        entry = tarIn.nextEntry
+                        continue
                     }
+                    if (entry.isDirectory) {
+                        destFile.mkdirs()
+                    } else if (entry.isSymbolicLink) {
+                        if (!destFile.exists()) {
+                            Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName))
+                        }
+                    } else {
+                        destFile.parentFile?.mkdirs()
+                        destFile.outputStream().use { output -> tarIn.copyTo(output) }
+                        
+                        if (entry.mode != 0) {
+                            try {
+                                val octal = Integer.toOctalString(entry.mode).takeLast(3)
+                                val perms = buildString {
+                                    for (c in octal) {
+                                        val v = Character.digit(c, 8)
+                                        append(if (v and 4 != 0) "r" else "-")
+                                        append(if (v and 2 != 0) "w" else "-")
+                                        append(if (v and 1 != 0) "x" else "-")
+                                    }
+                                }
+                                Files.setPosixFilePermissions(Paths.get(destFile.absolutePath), PosixFilePermissions.fromString(perms))
+                            } catch (e: Exception) { }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("Terminal", "Error extracting ${entry.name}", e)
                 }
                 entry = tarIn.nextEntry
             }

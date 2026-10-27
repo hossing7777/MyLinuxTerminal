@@ -7,13 +7,6 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.8" }
-    packaging { 
-        jniLibs { 
-            useLegacyPackaging = true 
-            // این خط باعث می‌شود گریدل به فایل proot ما دست نزند
-            keepDebugSymbols += "**/*.so" 
-        } 
-    }
 }
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")

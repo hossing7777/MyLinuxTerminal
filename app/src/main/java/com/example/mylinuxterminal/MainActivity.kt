@@ -59,7 +59,7 @@ fun TerminalScreen() {
     var currentDir by remember { mutableStateOf("/root") }
     var fontSize by remember { mutableStateOf(14.sp) }
     
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.9", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v8.0", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -136,8 +136,7 @@ fun TerminalScreen() {
                         "-b", "/dev",
                         "-b", "/proc",
                         "-b", "/sys",
-                        // 👇 اتصال پوشه اینترنت اندروید برای اطمینان از کارکرد شبکه
-                        "-b", "/system/etc/resolv.conf:/etc/resolv.conf", 
+                        // 👇 خط /system/etc/resolv.conf حذف شد
                         "/bin/sh", "-c", fullCmd
                     )
                     
@@ -251,7 +250,6 @@ fun fixAlpineStructure(alpineDir: File) {
         usrBinDir.mkdirs()
         if (!etcDir.exists()) etcDir.mkdirs()
 
-        // 👇 تنظیم DNS برای دسترسی به اینترنت
         val resolvConf = File(etcDir, "resolv.conf")
         if (!resolvConf.exists() || resolvConf.length() == 0L) {
             resolvConf.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\nnameserver 9.9.9.9\n")

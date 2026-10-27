@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v6.2", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v6.3", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -90,7 +90,6 @@ fun TerminalScreen() {
             }
         }
 
-        // عیب‌یابی: بررسی وجود فایل sh بعد از استخراج
         val shFile = File(alpineDir, "bin/sh")
         if (shFile.exists()) {
             withContext(Dispatchers.Main) { outputLines.add("Debug: /bin/sh exists.") }
@@ -120,22 +119,20 @@ fun TerminalScreen() {
                     val prootPath = File(context.applicationInfo.nativeLibraryDir, "libproot.so").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
                     
-                    // استفاده از cacheDir برای پوشه موقت که در برخی دستگاه‌ها سازگارتر است
-                    val tmpDir = File(context.cacheDir, "proot_tmp")
+                    // ⬇️ ترفند جدید: قرار دادن پوشه موقت در داخل خود لینوکس
+                    val tmpDir = File(alpinePath, "tmp")
                     if (!tmpDir.exists()) tmpDir.mkdirs()
 
                     val pb = ProcessBuilder(
                         prootPath,
                         "--kill-on-exit",
                         "--link2symlink",
-                        "--sysvipc", // پرچم جدید برای ارتباط بین پروسه‌ها
                         "-0",
                         "-r", alpinePath,
                         "-w", "/",
                         "-b", "/dev",
                         "-b", "/proc",
                         "-b", "/sys",
-                        "-b", "/storage/emulated/0:/sdcard",
                         "/bin/sh", "-c", cleanCmd
                     )
                     
@@ -225,12 +222,16 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
             if (entry.isDirectory) {
                 destFile.mkdirs()
             } else if (entry.isSymbolicLink) {
-                // مدیریت بهتر لینک‌های نمادین
+                // ⬇️ ترفند جدید: اگر اندروید اجازه ساخت لینک نداد، فایل را کپی کن
                 if (!destFile.exists()) {
                     try {
                         Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName))
                     } catch (e: Exception) {
-                        Log.e("Terminal", "Failed to create symlink: ${entry.name} -> ${entry.linkName}", e)
+                        Log.e("Terminal", "Symlink failed: ${entry.name} -> ${entry.linkName}. Trying to copy.")
+                        val targetFile = File(destDir, entry.linkName.removePrefix("/"))
+                        if (targetFile.exists()) {
+                            targetFile.copyTo(destFile, overwrite = true)
+                        }
                     }
                 }
             } else {

@@ -63,14 +63,15 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    var currentDir by remember { mutableStateOf("/root") }
     var fontSize by remember { mutableStateOf(14.sp) }
+    var textColor by remember { mutableStateOf(Color.Green) }
+    var bgColor by remember { mutableStateOf(Color.Black) }
+    var showSettings by remember { mutableStateOf(false) }
     
-    // 👇 مدیریت تاریخچه دستورات برای کلیدهای بالا/پایین
-    val commandHistory = remember { mutableStateListOf<String>() }
-    var historyIndex by remember { mutableStateOf(-1) }
-
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v8.3", "Initializing...") }
+    val ptyProcess = remember { PtyProcess() }
+    var ptyFd by remember { mutableStateOf(-1) }
+    
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v9.0", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -80,218 +81,198 @@ fun TerminalScreen() {
     val manageStorageLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (Environment.isExternalStorageManager()) {
-                outputLines.add("Storage permission granted! /sdcard is ready.")
-            } else {
-                outputLines.add("Storage permission denied. /sdcard may not work.")
-            }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            outputLines.add("Storage permission denied.")
         }
     }
 
     fun checkStoragePermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
-                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                intent.data = Uri.parse("package:${context.packageName}")
-                manageStorageLauncher.launch(intent)
-            }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+            intent.data = Uri.parse("package:${context.packageName}")
+            manageStorageLauncher.launch(intent)
         }
     }
 
     fun copyAllText() {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val clip = ClipData.newPlainText("Terminal Output", outputLines.joinToString("\n"))
-        clipboard.setPrimaryClip(clip)
-        outputLines.add("--- All text copied ---")
+        clipboard.setPrimaryClip(ClipData.newPlainText("Terminal", outputLines.joinToString("\n")))
+        outputLines.add("--- Copied ---")
     }
 
-    suspend fun extractLinux() = withContext(Dispatchers.IO) {
-        val alpineDir = File(context.filesDir, "alpine")
-        
-        val assets = context.assets.list("") ?: emptyArray()
-        val assetName = when {
-            assets.contains("alpine.tar.gz") -> "alpine.tar.gz"
-            assets.contains("alpine.tar") -> "alpine.tar"
-            else -> "alpine.tar.gz"
+    // شروع فرآیند PTY
+    LaunchedEffect(isExtracted) {
+        if (isExtracted && ptyFd <= 0) {
+            withContext(Dispatchers.IO) {
+                val nativeLibDir = context.applicationInfo.nativeLibraryDir
+                val prootPath = File(nativeLibDir, "libproot.so").absolutePath
+                val loaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
+                val alpinePath = File(context.filesDir, "alpine").absolutePath
+                val tmpDir = File(alpinePath, "tmp")
+                val scriptFile = File(context.filesDir, "start.sh")
+
+                scriptFile.writeText("""
+                    export PROOT_TMP_DIR=$tmpDir
+                    export PROOT_NO_SECCOMP=1
+                    export PROOT_LOADER=$loaderPath
+                    export LD_LIBRARY_PATH=$nativeLibDir
+                    export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+                    export HOME=/root
+                    export TERM=xterm-256color
+                    $prootPath --kill-on-exit --link2symlink --sysvipc -0 -r $alpinePath -w / -b /dev -b /proc -b /sys -b /storage/emulated/0:/sdcard /bin/sh
+                """.trimIndent())
+                scriptFile.setExecutable(true)
+
+                ptyFd = ptyProcess.createPty()
+                if (ptyFd > 0) {
+                    ptyProcess.execCommand("sh ${scriptFile.absolutePath}")
+                    val buf = ByteArray(4096)
+                    while (true) {
+                        val len = ptyProcess.readData(buf)
+                        if (len > 0) {
+                            val text = String(buf, 0, len)
+                            withContext(Dispatchers.Main) { outputLines.add(text.trimEnd()) }
+                        } else if (len < 0) break
+                    }
+                }
+            }
         }
+    }
+
+    fun runCommand(cmd: String) {
+        if (ptyFd <= 0) return
+        ptyProcess.writeData(cmd + "\n")
+    }
+
+    suspend fun extractLinuxAndInstall() = withContext(Dispatchers.IO) {
+        val alpineDir = File(context.filesDir, "alpine")
+        val assets = context.assets.list("") ?: emptyArray()
+        val assetName = if (assets.contains("alpine.tar.gz")) "alpine.tar.gz" else "alpine.tar"
 
         if (!alpineDir.exists() || alpineDir.listFiles()?.isEmpty() == true) {
             try {
                 alpineDir.mkdirs()
-                context.assets.open(assetName).use { input -> 
-                    extractTarSmart(input, alpineDir) 
-                }
+                context.assets.open(assetName).use { input -> extractTarSmart(input, alpineDir) }
                 withContext(Dispatchers.Main) { outputLines.add("Extraction successful!") }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { outputLines.add("Extract Error: ${e.toString()}") }
             }
         }
-
         fixAlpineStructure(alpineDir)
 
         withContext(Dispatchers.Main) {
+            outputLines.add("Installing essential packages (python3, git, nano)... This may take a minute.")
+        }
+
+        // نصب خودکار پکیج‌ها با ProcessBuilder (چون PTY هنوز آماده نیست)
+        try {
+            val nativeLibDir = context.applicationInfo.nativeLibraryDir
+            val prootPath = File(nativeLibDir, "libproot.so").absolutePath
+            val loaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
+            val tmpDir = File(alpineDir, "tmp")
+            
+            val pb = ProcessBuilder(
+                prootPath, "--kill-on-exit", "--link2symlink", "--sysvipc", "-0",
+                "-r", alpineDir.absolutePath, "-w", "/", "-b", "/dev", "-b", "/proc", "-b", "/sys",
+                "-b", "/storage/emulated/0:/sdcard", "/bin/sh", "-c", 
+                "apk update && apk add python3 git nano bash curl wget"
+            )
+            val env = pb.environment()
+            env["PROOT_TMP_DIR"] = tmpDir.absolutePath
+            env["PROOT_NO_SECCOMP"] = "1"
+            env["PROOT_LOADER"] = loaderPath
+            env["LD_LIBRARY_PATH"] = nativeLibDir
+            env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            env.remove("LD_PRELOAD")
+            
+            pb.redirectErrorStream(true)
+            val process = pb.start()
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                withContext(Dispatchers.Main) { outputLines.add(line) }
+            }
+            process.waitFor()
+            withContext(Dispatchers.Main) { outputLines.add("Packages installed successfully!") }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) { outputLines.add("Install Error: ${e.toString()}") }
+        }
+
+        withContext(Dispatchers.Main) {
             isExtracted = true
-            listState.animateScrollToItem(outputLines.size - 1)
             focusRequester.requestFocus()
             keyboardController?.show()
             checkStoragePermission()
         }
     }
 
-    LaunchedEffect(Unit) { extractLinux() }
+    LaunchedEffect(Unit) { extractLinuxAndInstall() }
 
-    fun runCommand(cmd: String) {
-        val cleanCmd = cmd.trim()
-        if (cleanCmd.isEmpty() || !isExtracted) return
-        if (cleanCmd == "clear") { outputLines.clear(); return }
-        
-        // ذخیره در تاریخچه
-        if (commandHistory.isEmpty() || commandHistory.last() != cleanCmd) {
-            commandHistory.add(cleanCmd)
-        }
-        historyIndex = -1 // ریست کردن ایندکس
-
-        outputLines.add("root@alpine:$currentDir# $cleanCmd")
-
-        coroutineScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                try {
-                    val nativeLibDir = context.applicationInfo.nativeLibraryDir
-                    val prootPath = File(nativeLibDir, "libproot.so").absolutePath
-                    val loaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
-                    val alpinePath = File(context.filesDir, "alpine").absolutePath
-                    val tmpDir = File(alpinePath, "tmp")
-
-                    val fullCmd = "cd \"$currentDir\" 2>/dev/null; $cleanCmd; echo \"__PWD__\"; pwd"
-
-                    val pb = ProcessBuilder(
-                        prootPath, "--kill-on-exit", "--link2symlink", "--sysvipc", "-0",
-                        "-r", alpinePath, "-w", "/", "-b", "/dev", "-b", "/proc", "-b", "/sys",
-                        "-b", "/storage/emulated/0:/sdcard", "/bin/sh", "-c", fullCmd
-                    )
+    // تنظیمات UI
+    if (showSettings) {
+        AlertDialog(
+            onDismissRequest = { showSettings = false },
+            title = { Text("Settings") },
+            text = {
+                Column {
+                    Text("Font Size: ${fontSize.value.toInt()}sp")
+                    Slider(value = fontSize.value, onValueChange = { fontSize = it.sp }, valueRange = 8f..36f)
+                    Spacer(modifier = Modifier.height(8.dp))
                     
-                    val env = pb.environment()
-                    env["PROOT_TMP_DIR"] = tmpDir.absolutePath
-                    env["PROOT_NO_SECCOMP"] = "1"
-                    env["PROOT_LOADER"] = loaderPath
-                    env["LD_LIBRARY_PATH"] = nativeLibDir
-                    env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-                    env["HOME"] = "/root"
-                    env["TERM"] = "xterm-256color"
-                    env.remove("LD_PRELOAD")
-                    
-                    pb.redirectErrorStream(true)
-                    val process = pb.start()
-                    
-                    val reader = BufferedReader(InputStreamReader(process.inputStream))
-                    val output = StringBuilder()
-                    var line: String?
-                    while (reader.readLine().also { line = it } != null) { output.append(line).append("\n") }
-                    process.waitFor()
-                    
-                    val rawOutput = output.toString().trim()
-                    val lines = rawOutput.lines()
-                    var newDir = currentDir
-                    val displayOutput = mutableListOf<String>()
-
-                    if (lines.size >= 2 && lines[lines.size - 2] == "__PWD__") {
-                        newDir = lines.last() 
-                        displayOutput.addAll(lines.dropLast(2)) 
-                    } else {
-                        displayOutput.addAll(lines)
+                    Text("Text Color:")
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Button(onClick = { textColor = Color.Green }) { Text("Green") }
+                        Button(onClick = { textColor = Color.White }) { Text("White") }
+                        Button(onClick = { textColor = Color.Yellow }) { Text("Yellow") }
                     }
-                    Pair(newDir, displayOutput.joinToString("\n").trim())
-                } catch (e: Exception) { 
-                    Pair(currentDir, "Error: ${e.toString()}") 
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Text("Background Color:")
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Button(onClick = { bgColor = Color.Black }) { Text("Black") }
+                        Button(onClick = { bgColor = Color(0xFF1A1A1A) }) { Text("Dark") }
+                        Button(onClick = { bgColor = Color(0xFF001F3F) }) { Text("Navy") }
+                    }
                 }
-            }
-            
-            if (result.first != currentDir && result.first.isNotEmpty()) { currentDir = result.first }
-            if (result.second.isNotEmpty()) { outputLines.add(result.second) }
-            listState.animateScrollToItem(outputLines.size - 1)
-        }
+            },
+            confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Close") } }
+        )
     }
 
-    Column(modifier = Modifier.fillMaxSize().background(Color.Black).padding(8.dp)) {
-        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.End) {
-            TextButton(onClick = { copyAllText() }) {
-                Text("Copy All", color = Color.Cyan, fontSize = 12.sp)
-            }
+    Column(modifier = Modifier.fillMaxSize().background(bgColor).padding(8.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            TextButton(onClick = { copyAllText() }) { Text("Copy All", color = Color.Cyan, fontSize = 12.sp) }
+            TextButton(onClick = { showSettings = true }) { Text("⚙️ Settings", color = Color.Cyan, fontSize = 12.sp) }
         }
         
         LazyColumn(
             state = listState, 
-            modifier = Modifier
-                .weight(1f)
-                .pointerInput(Unit) {
-                    detectTransformGestures { _, _, zoom, _ ->
-                        val newSize = fontSize.value * zoom
-                        fontSize = newSize.coerceIn(8f, 36f).sp
-                    }
+            modifier = Modifier.weight(1f).pointerInput(Unit) {
+                detectTransformGestures { _, _, zoom, _ ->
+                    fontSize = (fontSize.value * zoom).coerceIn(8f, 36f).sp
                 }
+            }
         ) {
             items(outputLines) { line -> 
-                SelectionContainer {
-                    Text(text = line, color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = fontSize) 
-                }
+                SelectionContainer { Text(text = line, color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize) }
             }
         }
         
-        // 👇 ردیف کلیدهای کمکی
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            val helperKeys = listOf(
-                "TAB" to "\t",
-                "CTRL+C" to "\u0003", // کاراکتر کنترل C
-                "UP" to "", // هندل کردن جداگانه
-                "DOWN" to "" // هندل کردن جداگانه
-            )
-
-            helperKeys.forEach { (label, char) ->
-                TextButton(
-                    onClick = {
-                        when (label) {
-                            "TAB" -> inputText += char
-                            "CTRL+C" -> {
-                                inputText += char
-                                outputLines.add("root@alpine:$currentDir# $inputText^C")
-                                inputText = ""
-                            }
-                            "UP" -> {
-                                if (commandHistory.isNotEmpty()) {
-                                    if (historyIndex == -1) historyIndex = commandHistory.size - 1
-                                    else if (historyIndex > 0) historyIndex--
-                                    inputText = commandHistory[historyIndex]
-                                }
-                            }
-                            "DOWN" -> {
-                                if (commandHistory.isNotEmpty()) {
-                                    if (historyIndex < commandHistory.size - 1) historyIndex++
-                                    else historyIndex = -1
-                                    inputText = if (historyIndex == -1) "" else commandHistory[historyIndex]
-                                }
-                            }
-                        }
-                        focusRequester.requestFocus()
-                    },
-                    modifier = Modifier.weight(1f)
-                ) {
+        // کلیدهای کمکی
+        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            listOf("TAB" to "\t", "CTRL+C" to "\u0003").forEach { (label, char) ->
+                TextButton(onClick = { ptyProcess.writeData(char); focusRequester.requestFocus() }, modifier = Modifier.weight(1f)) {
                     Text(text = label, color = Color.LightGray, fontSize = 12.sp)
                 }
             }
         }
 
         Row(modifier = Modifier.fillMaxWidth()) {
-            Text(text = "root@alpine:$currentDir# ", color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = fontSize)
+            Text(text = "$ ", color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize)
             BasicTextField(
                 value = inputText, 
                 onValueChange = { inputText = it },
-                textStyle = TextStyle(color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = fontSize),
+                textStyle = TextStyle(color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize),
                 modifier = Modifier.weight(1f).focusRequester(focusRequester),
                 singleLine = true, 
                 enabled = isExtracted,
@@ -320,9 +301,7 @@ fun fixAlpineStructure(alpineDir: File) {
         if (!etcDir.exists()) etcDir.mkdirs()
 
         val resolvConf = File(etcDir, "resolv.conf")
-        if (!resolvConf.exists() || resolvConf.length() == 0L) {
-            resolvConf.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\nnameserver 9.9.9.9\n")
-        }
+        if (!resolvConf.exists()) resolvConf.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
 
         var busybox = File(binDir, "busybox")
         if (!busybox.exists() || busybox.length() < 100000L) {
@@ -330,20 +309,13 @@ fun fixAlpineStructure(alpineDir: File) {
             if (usrBusybox.exists() && usrBusybox.length() > 100000L) busybox = usrBusybox
         }
 
-        if (busybox.exists() && busybox.length() > 100000L) {
-            val applets = listOf(
-                "sh", "ls", "cat", "echo", "pwd", "mkdir", "rm", "cp", "mv", 
-                "chmod", "chown", "sed", "grep", "awk", "env", "uname", 
-                "sleep", "kill", "ps", "ln", "df", "du", "head", "tail", 
-                "touch", "date", "clear", "mount", "id", "whoami", "find", "vi", "nano"
-            )
-            
+        if (busybox.exists()) {
+            val applets = listOf("sh", "ls", "cat", "echo", "pwd", "mkdir", "rm", "cp", "mv", "chmod", "grep", "sed", "awk", "find", "vi", "nano")
             for (applet in applets) {
                 val appletBin = File(binDir, applet)
                 try { appletBin.delete() } catch (e: Exception) {}
                 busybox.copyTo(appletBin, overwrite = true)
                 appletBin.setExecutable(true)
-
                 val appletUsrBin = File(usrBinDir, applet)
                 try { appletUsrBin.delete() } catch (e: Exception) {}
                 busybox.copyTo(appletUsrBin, overwrite = true)
@@ -353,26 +325,14 @@ fun fixAlpineStructure(alpineDir: File) {
 
         if (libDir.exists() && !libDir.isDirectory) libDir.delete()
         libDir.mkdirs()
-        
         val ldMusl = File(libDir, "ld-musl-aarch64.so.1")
-        if (!ldMusl.exists() || ldMusl.length() < 1000L) {
-            try { ldMusl.delete() } catch (e: Exception) {}
+        if (!ldMusl.exists()) {
             val libc = File(libDir, "libc.musl-aarch64.so.1")
-            if (libc.exists()) {
-                libc.copyTo(ldMusl, overwrite = true)
-                ldMusl.setExecutable(true)
-            }
+            if (libc.exists()) { libc.copyTo(ldMusl, overwrite = true); ldMusl.setExecutable(true) }
         }
-
-        val tmpDir = File(alpineDir, "tmp")
-        if (!tmpDir.exists()) tmpDir.mkdirs()
-        
-        val rootDir = File(alpineDir, "root")
-        if (!rootDir.exists()) rootDir.mkdirs()
-
-    } catch (e: Exception) {
-        Log.e("Terminal", "Fix structure error", e)
-    }
+        File(alpineDir, "tmp").mkdirs()
+        File(alpineDir, "root").mkdirs()
+    } catch (e: Exception) { Log.e("Terminal", "Fix structure error", e) }
 }
 
 fun extractTarSmart(inputStream: InputStream, destDir: File) {
@@ -381,7 +341,6 @@ fun extractTarSmart(inputStream: InputStream, destDir: File) {
     val signature = ByteArray(2)
     bufferedInputStream.read(signature)
     bufferedInputStream.reset()
-
     val isGzip = signature[0] == 0x1f.toByte() && signature[1] == 0x8b.toByte()
 
     if (isGzip) {
@@ -399,19 +358,15 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
         try {
             val destFile = File(destDir, entry.name)
             if (!destFile.canonicalPath.startsWith(destDir.canonicalPath + File.separator)) {
-                entry = tarIn.nextEntry
-                continue
+                entry = tarIn.nextEntry; continue
             }
             if (entry.isDirectory) {
                 destFile.mkdirs()
             } else if (entry.isSymbolicLink) {
-                try {
-                    Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName))
-                } catch (e: Exception) {}
+                try { Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName)) } catch (e: Exception) {}
             } else {
                 destFile.parentFile?.mkdirs()
                 destFile.outputStream().use { output -> tarIn.copyTo(output) }
-                
                 if (entry.mode != 0) {
                     try {
                         val octal = Integer.toOctalString(entry.mode).takeLast(3)
@@ -427,9 +382,7 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
                     } catch (e: Exception) { }
                 }
             }
-        } catch (e: Exception) {
-            Log.e("Terminal", "Error extracting ${entry.name}", e)
-        }
+        } catch (e: Exception) { Log.e("Terminal", "Error extracting", e) }
         entry = tarIn.nextEntry
     }
 }

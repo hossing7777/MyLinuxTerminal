@@ -19,14 +19,15 @@ jobs:
         mkdir -p app/src/main/jniLibs/arm64-v8a
         
         echo "Downloading PRoot..."
-        # لینک مستقیم و پایدار از mirror.hust.edu.cn (نسخه 5.1.107.96)
-        PROOT_URL="https://mirrors.hust.edu.cn/termux/apt/termux-main/pool/main/p/proot/proot_5.1.107.96_aarch64.deb"
+        # لینک دقیق و معتبر از سرور Aliyun
+        PROOT_URL="https://mirrors.aliyun.com/termux/termux-main/pool/main/p/proot/proot_5.1.107.101_aarch64.deb"
         curl -fL -o proot.deb "$PROOT_URL"
         
         FILE_SIZE=$(stat -c%s proot.deb)
         echo "Downloaded PRoot size: $FILE_SIZE bytes"
         if [ "$FILE_SIZE" -lt 50000 ]; then
           echo "Error: Downloaded PRoot file is too small. Download likely failed."
+          cat proot.deb
           exit 1
         fi
 

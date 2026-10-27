@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v5.6", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v5.7", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -72,7 +72,7 @@ fun TerminalScreen() {
         val alpineDir = File(context.filesDir, "alpine")
         val prootFile = File(context.filesDir, "proot")
 
-        // ۱. کپی کردن PRoot از assets به filesDir (نه jniLibs)
+        // ۱. کپی کردن PRoot از assets به filesDir
         if (!prootFile.exists()) {
             try {
                 context.assets.open("proot").use { input ->
@@ -80,7 +80,18 @@ fun TerminalScreen() {
                 }
                 prootFile.setExecutable(true, false)
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { outputLines.add("PRoot Copy Error: ${e.toString()}") }
+                // اگر در assets نبود، از nativeLib کپی کن
+                try {
+                    val nativeLibProot = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
+                    if (nativeLibProot.exists()) {
+                        nativeLibProot.copyTo(prootFile, overwrite = true)
+                        prootFile.setExecutable(true, false)
+                    } else {
+                        withContext(Dispatchers.Main) { outputLines.add("PRoot Copy Error: neither assets nor nativeLib found") }
+                    }
+                } catch (ex: Exception) {
+                    withContext(Dispatchers.Main) { outputLines.add("PRoot Copy Error: ${e.toString()}") }
+                }
             }
         }
 
@@ -123,10 +134,11 @@ fun TerminalScreen() {
         coroutineScope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
-                    // استفاده از فایل اجرایی proot در filesDir
                     val prootPath = File(context.filesDir, "proot").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
-                    val tmpDir = File(context.cacheDir, "proot_tmp")
+                    
+                    // ⬇️ تغییر مهم: استفاده از filesDir به جای cacheDir برای پوشه موقت
+                    val tmpDir = File(context.filesDir, "tmp")
                     if (!tmpDir.exists()) tmpDir.mkdirs()
 
                     val pb = ProcessBuilder(

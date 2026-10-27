@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.0", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.1", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -146,7 +146,9 @@ fun TerminalScreen() {
         coroutineScope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
-                    val prootPath = File(context.applicationInfo.nativeLibraryDir, "libproot.so").absolutePath
+                    val nativeLibDir = context.applicationInfo.nativeLibraryDir
+                    val prootPath = File(nativeLibDir, "libproot.so").absolutePath
+                    val loaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
                     val tmpDir = File(alpinePath, "tmp")
 
@@ -167,7 +169,8 @@ fun TerminalScreen() {
                     val env = pb.environment()
                     env["PROOT_TMP_DIR"] = tmpDir.absolutePath
                     env["PROOT_NO_SECCOMP"] = "1"
-                    env.remove("LD_PRELOAD") // حذف کامل LD_PRELOAD
+                    env["PROOT_LOADER"] = loaderPath // مسیر لودر PRoot رسمی
+                    env.remove("LD_PRELOAD")
                     
                     pb.redirectErrorStream(true)
                     val process = pb.start()

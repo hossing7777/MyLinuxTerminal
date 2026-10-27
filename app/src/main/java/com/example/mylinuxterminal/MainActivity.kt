@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v6.0", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v6.2", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -71,7 +71,6 @@ fun TerminalScreen() {
     suspend fun extractLinux() = withContext(Dispatchers.IO) {
         val alpineDir = File(context.filesDir, "alpine")
         
-        // پیدا کردن فایل لینوکس در assets
         val assets = context.assets.list("") ?: emptyArray()
         val assetName = when {
             assets.contains("alpine.tar.gz") -> "alpine.tar.gz"
@@ -89,6 +88,14 @@ fun TerminalScreen() {
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { outputLines.add("Extract Error: ${e.toString()}") }
             }
+        }
+
+        // عیب‌یابی: بررسی وجود فایل sh بعد از استخراج
+        val shFile = File(alpineDir, "bin/sh")
+        if (shFile.exists()) {
+            withContext(Dispatchers.Main) { outputLines.add("Debug: /bin/sh exists.") }
+        } else {
+            withContext(Dispatchers.Main) { outputLines.add("Debug: /bin/sh NOT FOUND!") }
         }
 
         withContext(Dispatchers.Main) {
@@ -110,25 +117,24 @@ fun TerminalScreen() {
         coroutineScope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
-                    // اجرای PRoot از پوشه nativeLibraryDir
                     val prootPath = File(context.applicationInfo.nativeLibraryDir, "libproot.so").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
                     
-                    // پوشه موقت در filesDir (قابل نوشتن)
-                    val tmpDir = File(context.filesDir, "tmp")
+                    // استفاده از cacheDir برای پوشه موقت که در برخی دستگاه‌ها سازگارتر است
+                    val tmpDir = File(context.cacheDir, "proot_tmp")
                     if (!tmpDir.exists()) tmpDir.mkdirs()
 
                     val pb = ProcessBuilder(
                         prootPath,
                         "--kill-on-exit",
                         "--link2symlink",
+                        "--sysvipc", // پرچم جدید برای ارتباط بین پروسه‌ها
                         "-0",
                         "-r", alpinePath,
                         "-w", "/",
                         "-b", "/dev",
                         "-b", "/proc",
                         "-b", "/sys",
-                        "-b", "/system",
                         "-b", "/storage/emulated/0:/sdcard",
                         "/bin/sh", "-c", cleanCmd
                     )
@@ -219,8 +225,13 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
             if (entry.isDirectory) {
                 destFile.mkdirs()
             } else if (entry.isSymbolicLink) {
+                // مدیریت بهتر لینک‌های نمادین
                 if (!destFile.exists()) {
-                    Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName))
+                    try {
+                        Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName))
+                    } catch (e: Exception) {
+                        Log.e("Terminal", "Failed to create symlink: ${entry.name} -> ${entry.linkName}", e)
+                    }
                 }
             } else {
                 destFile.parentFile?.mkdirs()

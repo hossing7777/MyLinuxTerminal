@@ -71,7 +71,7 @@ fun TerminalScreen() {
     val ptyProcess = remember { PtyProcess() }
     var ptyFd by remember { mutableStateOf(-1) }
     
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v9.0", "Initializing...") }
+    val outputLines = remember { mutableStateListOf<String>() }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -119,19 +119,29 @@ fun TerminalScreen() {
                     export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
                     export HOME=/root
                     export TERM=xterm-256color
-                    $prootPath --kill-on-exit --link2symlink --sysvipc -0 -r $alpinePath -w / -b /dev -b /proc -b /sys -b /storage/emulated/0:/sdcard /bin/sh
+                    exec $prootPath --kill-on-exit --link2symlink --sysvipc -0 -r $alpinePath -w / -b /dev -b /proc -b /sys -b /storage/emulated/0:/sdcard /bin/sh
                 """.trimIndent())
                 scriptFile.setExecutable(true)
 
-                ptyFd = ptyProcess.createPty()
+                // اجرای اسکریپت در PTY
+                ptyFd = ptyProcess.createPty("sh ${scriptFile.absolutePath}")
                 if (ptyFd > 0) {
-                    ptyProcess.execCommand("sh ${scriptFile.absolutePath}")
                     val buf = ByteArray(4096)
                     while (true) {
                         val len = ptyProcess.readData(buf)
                         if (len > 0) {
                             val text = String(buf, 0, len)
-                            withContext(Dispatchers.Main) { outputLines.add(text.trimEnd()) }
+                            // تمیز کردن کدهای ANSI اضافی برای نمایش بهتر
+                            val cleanText = text.replace("\r\n", "\n").replace("\r", "")
+                            withContext(Dispatchers.Main) { 
+                                // ادغام خروجی‌های پشت سر هم برای جلوگیری از خطوط خالی
+                                if (outputLines.isNotEmpty()) {
+                                    val lastLine = outputLines.removeAt(outputLines.size - 1)
+                                    outputLines.add(lastLine + cleanText)
+                                } else {
+                                    outputLines.add(cleanText)
+                                }
+                            }
                         } else if (len < 0) break
                     }
                 }
@@ -164,7 +174,6 @@ fun TerminalScreen() {
             outputLines.add("Installing essential packages (python3, git, nano)... This may take a minute.")
         }
 
-        // نصب خودکار پکیج‌ها
         try {
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
             val prootPath = File(nativeLibDir, "libproot.so").absolutePath
@@ -189,7 +198,6 @@ fun TerminalScreen() {
             val process = pb.start()
             val reader = BufferedReader(InputStreamReader(process.inputStream))
             
-            // 👇 رفع خطای String? به String
             var line = reader.readLine()
             while (line != null) {
                 val finalLine = line 
@@ -222,7 +230,6 @@ fun TerminalScreen() {
                     Text("Font Size: ${fontSize.value.toInt()}sp")
                     Slider(value = fontSize.value, onValueChange = { fontSize = it.sp }, valueRange = 8f..36f)
                     Spacer(modifier = Modifier.height(8.dp))
-                    
                     Text("Text Color:")
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Button(onClick = { textColor = Color.Green }) { Text("Green") }
@@ -230,7 +237,6 @@ fun TerminalScreen() {
                         Button(onClick = { textColor = Color.Yellow }) { Text("Yellow") }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    
                     Text("Background Color:")
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Button(onClick = { bgColor = Color.Black }) { Text("Black") }

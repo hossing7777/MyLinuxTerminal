@@ -7,10 +7,10 @@
 #include <string.h>
 
 int master_fd = -1;
-pid_t child_pid = -1;
 
 JNIEXPORT jint JNICALL
-Java_com_example_mylinuxterminal_PtyProcess_createPty(JNIEnv *env, jobject thiz) {
+Java_com_example_mylinuxterminal_PtyProcess_createPty(JNIEnv *env, jobject thiz, jstring cmd) {
+    const char *cmd_str = (*env)->GetStringUTFChars(env, cmd, 0);
     master_fd = posix_openpt(O_RDWR | O_NOCTTY);
     if (master_fd == -1) return -1;
     if (grantpt(master_fd) == -1) return -1;
@@ -19,7 +19,7 @@ Java_com_example_mylinuxterminal_PtyProcess_createPty(JNIEnv *env, jobject thiz)
     char *slave_name = ptsname(master_fd);
     if (slave_name == NULL) return -1;
 
-    child_pid = fork();
+    pid_t child_pid = fork();
     if (child_pid == 0) {
         close(master_fd);
         int slave_fd = open(slave_name, O_RDWR | O_NOCTTY);
@@ -33,20 +33,12 @@ Java_com_example_mylinuxterminal_PtyProcess_createPty(JNIEnv *env, jobject thiz)
         dup2(slave_fd, 2);
         if (slave_fd > 2) close(slave_fd);
 
-        return 0; // Child
-    } else if (child_pid > 0) {
-        return master_fd; // Parent
-    }
-    return -1;
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_mylinuxterminal_PtyProcess_execCommand(JNIEnv *env, jobject thiz, jstring cmd) {
-    if (child_pid == 0) {
-        const char *cmd_str = (*env)->GetStringUTFChars(env, cmd, 0);
+        // اجرای مستقیم دستور در پروسه فرزند
         execl("/system/bin/sh", "sh", "-c", cmd_str, NULL);
         _exit(1);
     }
+    (*env)->ReleaseStringUTFChars(env, cmd, cmd_str);
+    return master_fd;
 }
 
 JNIEXPORT jint JNICALL

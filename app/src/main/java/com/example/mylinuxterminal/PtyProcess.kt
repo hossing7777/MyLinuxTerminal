@@ -1,8 +1,7 @@
 package com.example.mylinuxterminal
 
 class PtyProcess {
-    external fun createPty(): Int
-    external fun execCommand(cmd: String)
+    external fun createPty(cmd: String): Int
     external fun readData(buffer: ByteArray): Int
     external fun writeData(data: String)
     

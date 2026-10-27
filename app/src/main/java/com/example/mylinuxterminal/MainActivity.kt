@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v6.9", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.0", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -154,7 +154,7 @@ fun TerminalScreen() {
                         prootPath,
                         "--kill-on-exit",
                         "--link2symlink",
-                        "--sysvipc", // پرچم جدید برای دور زدن seccomp
+                        "--sysvipc",
                         "-0",
                         "-r", alpinePath,
                         "-w", "/",
@@ -167,7 +167,7 @@ fun TerminalScreen() {
                     val env = pb.environment()
                     env["PROOT_TMP_DIR"] = tmpDir.absolutePath
                     env["PROOT_NO_SECCOMP"] = "1"
-                    env.remove("LD_PRELOAD") // حذف متغیر مزاحم
+                    env.remove("LD_PRELOAD") // حذف کامل LD_PRELOAD
                     
                     pb.redirectErrorStream(true)
                     val process = pb.start()

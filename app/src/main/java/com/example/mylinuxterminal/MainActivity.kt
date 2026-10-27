@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.3", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.4", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -90,7 +90,7 @@ fun TerminalScreen() {
             }
         }
 
-        // 🛠️ ترفند نهایی: بازسازی ساختار پوشه‌ها بعد از استخراج
+        // 🛠️ ترفند نهایی: بازسازی ساختار و ساخت دستی دستورات
         fixAlpineStructure(alpineDir)
 
         val shFile = File(alpineDir, "bin/sh")
@@ -195,67 +195,68 @@ fun TerminalScreen() {
     }
 }
 
-// تابع بازسازی ساختار پوشه‌ها (جایگزین لینک‌های ناموفق)
+// تابع بازسازی ساختار پوشه‌ها و ساخت دستی دستورات
 fun fixAlpineStructure(alpineDir: File) {
     try {
-        // ۱. ساخت پوشه bin و کپی کردن محتویات usr/bin به آن
         val binDir = File(alpineDir, "bin")
         val usrBinDir = File(alpineDir, "usr/bin")
-        if (!binDir.isDirectory && usrBinDir.isDirectory) {
-            if (binDir.exists()) binDir.delete()
-            binDir.mkdirs()
+        val libDir = File(alpineDir, "lib")
+        val usrLibDir = File(alpineDir, "usr/lib")
+
+        // ۱. پاکسازی و بازسازی پوشه bin
+        if (binDir.exists() && !binDir.isDirectory) binDir.delete()
+        binDir.mkdirs()
+
+        if (usrBinDir.exists()) {
             usrBinDir.listFiles()?.forEach { file ->
                 if (file.isFile) {
                     val dest = File(binDir, file.name)
-                    if (!dest.exists()) file.copyTo(dest, overwrite = true)
+                    file.copyTo(dest, overwrite = true)
                     dest.setExecutable(true)
                 }
             }
         }
 
-        // ۲. ساخت پوشه lib و کپی کردن محتویات usr/lib به آن
-        val libDir = File(alpineDir, "lib")
-        val usrLibDir = File(alpineDir, "usr/lib")
-        if (!libDir.isDirectory && usrLibDir.isDirectory) {
-            if (libDir.exists()) libDir.delete()
-            libDir.mkdirs()
+        // ۲. پاکسازی و بازسازی پوشه lib
+        if (libDir.exists() && !libDir.isDirectory) libDir.delete()
+        libDir.mkdirs()
+
+        if (usrLibDir.exists()) {
             usrLibDir.listFiles()?.forEach { file ->
                 if (file.isFile) {
                     val dest = File(libDir, file.name)
-                    if (!dest.exists()) file.copyTo(dest, overwrite = true)
+                    file.copyTo(dest, overwrite = true)
                 }
             }
         }
 
-        // ۳. ساخت پوشه sbin
-        val sbinDir = File(alpineDir, "sbin")
-        val usrSbinDir = File(alpineDir, "usr/sbin")
-        if (!sbinDir.isDirectory && usrSbinDir.isDirectory) {
-            if (sbinDir.exists()) sbinDir.delete()
-            sbinDir.mkdirs()
-            usrSbinDir.listFiles()?.forEach { file ->
-                if (file.isFile) {
-                    val dest = File(sbinDir, file.name)
-                    if (!dest.exists()) file.copyTo(dest, overwrite = true)
-                    dest.setExecutable(true)
+        // ۳. ساخت فیزیکی دستورات ضروری از روی busybox
+        val busybox = File(binDir, "busybox")
+        if (busybox.exists()) {
+            // لیست دستوراتی که در ترمینال به آن‌ها نیاز داریم
+            val applets = listOf(
+                "sh", "ls", "cat", "echo", "pwd", "mkdir", "rm", "cp", "mv", 
+                "chmod", "chown", "sed", "grep", "awk", "env", "uname", 
+                "sleep", "kill", "ps", "ln", "df", "du", "head", "tail", 
+                "touch", "date", "clear", "mount", "id", "whoami"
+            )
+            
+            for (applet in applets) {
+                val appletFile = File(binDir, applet)
+                // اگر فایل وجود ندارد یا حجمش صفر است، از busybox کپی می‌کنیم
+                if (!appletFile.exists() || appletFile.length() == 0L) {
+                    appletFile.delete()
+                    busybox.copyTo(appletFile, overwrite = true)
+                    appletFile.setExecutable(true)
                 }
             }
         }
 
-        // ۴. اطمینان از وجود فایل شل (sh) به صورت فیزیکی
-        val shFile = File(alpineDir, "bin/sh")
-        if (!shFile.exists() || shFile.length() == 0L) {
-            val busybox = File(alpineDir, "bin/busybox")
-            if (busybox.exists()) {
-                busybox.copyTo(shFile, overwrite = true)
-                shFile.setExecutable(true)
-            }
-        }
-
-        // ۵. اطمینان از وجود لودر لینوکس (ld-musl) به صورت فیزیکی
-        val ldMusl = File(alpineDir, "lib/ld-musl-aarch64.so.1")
+        // ۴. اصلاح لودر لینوکس (ld-musl)
+        val ldMusl = File(libDir, "ld-musl-aarch64.so.1")
         if (!ldMusl.exists() || ldMusl.length() == 0L) {
-            val libc = File(alpineDir, "lib/libc.musl-aarch64.so.1")
+            ldMusl.delete()
+            val libc = File(libDir, "libc.musl-aarch64.so.1")
             if (libc.exists()) {
                 libc.copyTo(ldMusl, overwrite = true)
                 ldMusl.setExecutable(true)

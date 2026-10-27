@@ -51,7 +51,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v5.0", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v5.1", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -93,15 +93,22 @@ fun TerminalScreen() {
         coroutineScope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
-                    // استفاده از پوشه nativeLibraryDir که اندروید اجازه اجرا در آن را می‌دهد
                     val prootPath = File(context.applicationInfo.nativeLibraryDir, "libproot.so").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
+                    
+                    // ساخت پوشه موقت اختصاصی برای PRoot
+                    val tmpDir = File(context.cacheDir, "proot_tmp")
+                    if (!tmpDir.exists()) tmpDir.mkdirs()
 
                     val pb = ProcessBuilder(
                         prootPath, "-r", alpinePath, "-0", "-w", "/",
                         "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "/storage/emulated/0:/sdcard",
                         "/bin/sh", "-c", cleanCmd
                     )
+                    
+                    // تنظیم متغیر محیطی PROOT_TMP_DIR برای رفع خطا
+                    pb.environment()["PROOT_TMP_DIR"] = tmpDir.absolutePath
+                    
                     pb.redirectErrorStream(true)
                     val process = pb.start()
                     
@@ -119,11 +126,16 @@ fun TerminalScreen() {
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Color.Black).padding(8.dp)) {
-        // 👇 این بخش مشکل سلکت متن را حل می‌کند
-        SelectionContainer(modifier = Modifier.weight(1f)) {
-            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                items(outputLines) { line -> 
-                    Text(text = line, color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp) 
+        LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
+            items(outputLines) { line -> 
+                // 👇 قرار دادن SelectionContainer داخل هر آیتم برای سلکت دقیق و بدون باگ
+                SelectionContainer {
+                    Text(
+                        text = line, 
+                        color = Color.Green, 
+                        fontFamily = FontFamily.Monospace, 
+                        fontSize = 14.sp
+                    ) 
                 }
             }
         }

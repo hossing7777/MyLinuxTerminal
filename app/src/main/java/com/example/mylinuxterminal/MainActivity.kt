@@ -33,6 +33,7 @@ import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import java.io.*
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.nio.file.attribute.PosixFilePermissions // <--- این خط اضافه شد
 import java.util.zip.ZipInputStream
 
 class MainActivity : ComponentActivity() {
@@ -51,7 +52,6 @@ fun TerminalScreen() {
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
-    // ابزارهای مدیریت کیبورد و فوکوس
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -87,7 +87,6 @@ fun TerminalScreen() {
             outputLines.add("Alpine Linux initialized successfully!")
             outputLines.add("Try: 'cat /etc/os-release' or 'apk add python3'")
             listState.animateScrollToItem(outputLines.size - 1)
-            // درخواست فوکوس بعد از آماده شدن برنامه
             focusRequester.requestFocus()
             keyboardController?.show()
         }
@@ -140,14 +139,13 @@ fun TerminalScreen() {
                 textStyle = TextStyle(color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp),
                 modifier = Modifier
                     .weight(1f)
-                    .focusRequester(focusRequester), // اتصال فوکوس به این کادر
+                    .focusRequester(focusRequester),
                 singleLine = true, 
                 enabled = isExtracted,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { 
                     runCommand(inputText)
                     inputText = ""
-                    // بعد از زدن اینتر، دوباره فوکوس را برمی‌گردانیم تا کیبورد بسته نشود
                     focusRequester.requestFocus()
                 })
             )

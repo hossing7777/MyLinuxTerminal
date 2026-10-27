@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
@@ -24,6 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
 
 class MainActivity : ComponentActivity() {
@@ -35,28 +37,60 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun TerminalScreen() {
+    val context = LocalContext.current
+    val initialDir = remember { context.filesDir.absolutePath }
+    
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v1.0", "Type a command (e.g., 'pwd', 'ls', 'id') and press Enter.") }
+    var currentDir by remember { mutableStateOf(initialDir) }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v1.0", "Type 'ls', 'pwd', 'cd ..', 'mkdir test', or 'clear'") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
+
+    fun getPrompt(): String {
+        val displayPath = if (currentDir == initialDir) "~" else currentDir.replace(initialDir, "~")
+        return "root@android:$displayPath# "
+    }
 
     fun runCommand(cmd: String) {
         val cleanCmd = cmd.trim()
         if (cleanCmd.isEmpty()) return
         
-        outputLines.add("root@android:~# $cleanCmd")
+        // ۱. مدیریت دستور clear
+        if (cleanCmd == "clear") {
+            outputLines.clear()
+            return
+        }
         
+        outputLines.add(getPrompt() + cleanCmd)
+
+        // ۲. مدیریت دستور cd
+        if (cleanCmd.startsWith("cd ")) {
+            val path = cleanCmd.substring(3).trim()
+            val newDir = if (path.startsWith("/")) File(path) else File(currentDir, path)
+            if (newDir.exists() && newDir.isDirectory) {
+                currentDir = newDir.canonicalPath
+            } else {
+                outputLines.add("cd: no such file or directory: $path")
+            }
+            return
+        }
+
+        // ۳. اجرای سایر دستورات در پس‌زمینه
         coroutineScope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
-                    val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", cleanCmd))
+                    val pb = ProcessBuilder("sh", "-c", cleanCmd)
+                    pb.directory(File(currentDir)) // اجرای دستور در پوشه فعلی
+                    pb.redirectErrorStream(true) // ادغام خروجی و خطاها
+                    val process = pb.start()
+                    
                     val reader = BufferedReader(InputStreamReader(process.inputStream))
-                    val errorReader = BufferedReader(InputStreamReader(process.errorStream))
                     val output = StringBuilder()
                     var line: String?
                     
-                    while (reader.readLine().also { line = it } != null) output.append(line).append("\n")
-                    while (errorReader.readLine().also { line = it } != null) output.append(line).append("\n")
+                    while (reader.readLine().also { line = it } != null) {
+                        output.append(line).append("\n")
+                    }
                     process.waitFor()
                     output.toString().trim()
                 } catch (e: Exception) {
@@ -90,7 +124,7 @@ fun TerminalScreen() {
         
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "$ ",
+                text = getPrompt(),
                 color = Color.Green,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 14.sp

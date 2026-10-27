@@ -1,11 +1,9 @@
 package com.example.mylinuxterminal
 
-import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -13,6 +11,7 @@ import android.os.Environment
 import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -67,21 +66,22 @@ fun TerminalScreen() {
     var currentDir by remember { mutableStateOf("/root") }
     var fontSize by remember { mutableStateOf(14.sp) }
     
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v8.1", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v8.2", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
-    // 👇 درخواست مجوز دسترسی به فایل‌ها (برای اندروید ۱۱ به بالا)
     val manageStorageLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) {
-        if (Environment.isExternalStorageManager()) {
-            outputLines.add("Storage permission granted! /sdcard is ready.")
-        } else {
-            outputLines.add("Storage permission denied. /sdcard may not work.")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (Environment.isExternalStorageManager()) {
+                outputLines.add("Storage permission granted! /sdcard is ready.")
+            } else {
+                outputLines.add("Storage permission denied. /sdcard may not work.")
+            }
         }
     }
 
@@ -131,7 +131,7 @@ fun TerminalScreen() {
             listState.animateScrollToItem(outputLines.size - 1)
             focusRequester.requestFocus()
             keyboardController?.show()
-            checkStoragePermission() // درخواست مجوز در زمان اجرا
+            checkStoragePermission()
         }
     }
 
@@ -166,7 +166,7 @@ fun TerminalScreen() {
                         "-b", "/dev",
                         "-b", "/proc",
                         "-b", "/sys",
-                        "-b", "/storage/emulated/0:/sdcard", // اتصال حافظه
+                        "-b", "/storage/emulated/0:/sdcard",
                         "/bin/sh", "-c", fullCmd
                     )
                     

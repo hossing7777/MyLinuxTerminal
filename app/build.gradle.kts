@@ -7,6 +7,7 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.8" }
+    packaging { jniLibs { useLegacyPackaging = true } }
 }
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")

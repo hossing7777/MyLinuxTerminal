@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -50,7 +51,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v4.3", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v5.0", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -58,24 +59,8 @@ fun TerminalScreen() {
     val keyboardController = LocalSoftwareKeyboardController.current
 
     suspend fun extractLinux() = withContext(Dispatchers.IO) {
-        val binDir = File(context.filesDir, "bin")
         val alpineDir = File(context.filesDir, "alpine")
         
-        // ۱. استخراج PRoot از assets
-        val prootFile = File(binDir, "proot")
-        if (!prootFile.exists()) {
-            try {
-                binDir.mkdirs()
-                context.assets.open("proot").use { input ->
-                    prootFile.outputStream().use { output -> input.copyTo(output) }
-                }
-                prootFile.setExecutable(true, false)
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) { outputLines.add("PRoot Extract Error: ${e.toString()}") }
-            }
-        }
-
-        // ۲. استخراج Alpine Linux
         if (!alpineDir.exists() || alpineDir.listFiles()?.isEmpty() == true) {
             try {
                 alpineDir.mkdirs()
@@ -83,7 +68,6 @@ fun TerminalScreen() {
                     extractTarGz(input, alpineDir) 
                 }
             } catch (e: Exception) {
-                // چاپ خطای دقیق
                 withContext(Dispatchers.Main) { outputLines.add("Alpine Extract Error: ${e.toString()}") }
             }
         }
@@ -109,7 +93,8 @@ fun TerminalScreen() {
         coroutineScope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
-                    val prootPath = File(context.filesDir, "bin/proot").absolutePath
+                    // استفاده از پوشه nativeLibraryDir که اندروید اجازه اجرا در آن را می‌دهد
+                    val prootPath = File(context.applicationInfo.nativeLibraryDir, "libproot.so").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
 
                     val pb = ProcessBuilder(
@@ -134,18 +119,22 @@ fun TerminalScreen() {
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Color.Black).padding(8.dp)) {
-        LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
-            items(outputLines) { line -> Text(text = line, color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp) }
+        // 👇 این بخش مشکل سلکت متن را حل می‌کند
+        SelectionContainer(modifier = Modifier.weight(1f)) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                items(outputLines) { line -> 
+                    Text(text = line, color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp) 
+                }
+            }
         }
+        
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(text = "root@alpine:~# ", color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
             BasicTextField(
                 value = inputText, 
                 onValueChange = { inputText = it },
                 textStyle = TextStyle(color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp),
-                modifier = Modifier
-                    .weight(1f)
-                    .focusRequester(focusRequester),
+                modifier = Modifier.weight(1f).focusRequester(focusRequester),
                 singleLine = true, 
                 enabled = isExtracted,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),

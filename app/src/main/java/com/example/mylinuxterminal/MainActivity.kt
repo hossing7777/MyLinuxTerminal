@@ -40,31 +40,24 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v2.0", "Initializing Alpine Linux... Please wait.") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v2.1", "Initializing Alpine Linux...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
 
     suspend fun extractLinux() = withContext(Dispatchers.IO) {
-        // PRoot از nativeLibraryDir بارگذاری می‌شود
-        val prootFile = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
-        val prootLoader = File(context.applicationInfo.nativeLibraryDir, "libproot_loader.so")
         val alpineDir = File(context.filesDir, "alpine")
         val tarFile = File(context.filesDir, "alpine.tar.gz")
 
-        if (!prootFile.exists() || !alpineDir.exists()) {
+        if (!alpineDir.exists() || alpineDir.listFiles()?.isEmpty() == true) {
             try {
-                // اطمینان از اجرایی بودن PRoot و Loader
-                if (prootFile.exists()) prootFile.setExecutable(true)
-                if (prootLoader.exists()) prootLoader.setExecutable(true)
-
                 context.assets.open("alpine.tar.gz").use { input ->
                     tarFile.outputStream().use { output -> input.copyTo(output) }
                 }
                 if (!alpineDir.exists()) alpineDir.mkdirs()
                 
                 val process = Runtime.getRuntime().exec("tar -xzf ${tarFile.absolutePath} -C ${alpineDir.absolutePath}")
-                process.waitFor()
-                tarFile.delete()
+                val exitCode = process.waitFor()
+                if (exitCode == 0) tarFile.delete()
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { outputLines.add("Extraction Error: ${e.message}") }
             }
@@ -72,7 +65,7 @@ fun TerminalScreen() {
         withContext(Dispatchers.Main) {
             isExtracted = true
             outputLines.add("Alpine Linux initialized successfully!")
-            outputLines.add("You can now use 'apk add <package>' to install tools.")
+            outputLines.add("Try: 'cat /etc/os-release' or 'apk add python3'")
             listState.animateScrollToItem(outputLines.size - 1)
         }
     }
@@ -93,12 +86,14 @@ fun TerminalScreen() {
         coroutineScope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
-                    val prootPath = File(context.applicationInfo.nativeLibraryDir, "libproot.so").absolutePath
-                    val prootLoaderPath = File(context.applicationInfo.nativeLibraryDir, "libproot_loader.so").absolutePath
+                    val nativeLibDir = context.applicationInfo.nativeLibraryDir
+                    val prootPath = File(nativeLibDir, "libproot.so").absolutePath
+                    val prootLoaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
                     
                     val pb = ProcessBuilder(
                         prootPath, 
+                        "--link2symlink", // بسیار مهم برای سازگاری اندروید
                         "-r", alpinePath, 
                         "-0", 
                         "-w", "/",
@@ -133,30 +128,14 @@ fun TerminalScreen() {
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().background(Color.Black).padding(8.dp)
-    ) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.weight(1f)
-        ) {
+    Column(modifier = Modifier.fillMaxSize().background(Color.Black).padding(8.dp)) {
+        LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
             items(outputLines) { line ->
-                Text(
-                    text = line,
-                    color = Color.Green,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 14.sp
-                )
+                Text(text = line, color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
             }
         }
-        
         Row(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = "root@alpine:~# ",
-                color = Color.Green,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 14.sp
-            )
+            Text(text = "root@alpine:~# ", color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
             BasicTextField(
                 value = inputText,
                 onValueChange = { inputText = it },

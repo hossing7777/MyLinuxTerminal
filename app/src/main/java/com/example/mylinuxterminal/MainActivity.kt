@@ -1,5 +1,8 @@
 package com.example.mylinuxterminal
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -13,7 +16,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material3.Text
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -45,18 +48,26 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v5.1", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v5.2", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+
+    // تابع کپی کردن کل متن‌ها
+    fun copyAllText() {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText("Terminal Output", outputLines.joinToString("\n"))
+        clipboard.setPrimaryClip(clip)
+        outputLines.add("--- All text copied to clipboard ---")
+    }
 
     suspend fun extractLinux() = withContext(Dispatchers.IO) {
         val alpineDir = File(context.filesDir, "alpine")
@@ -95,8 +106,6 @@ fun TerminalScreen() {
                 try {
                     val prootPath = File(context.applicationInfo.nativeLibraryDir, "libproot.so").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
-                    
-                    // ساخت پوشه موقت اختصاصی برای PRoot
                     val tmpDir = File(context.cacheDir, "proot_tmp")
                     if (!tmpDir.exists()) tmpDir.mkdirs()
 
@@ -105,10 +114,7 @@ fun TerminalScreen() {
                         "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "/storage/emulated/0:/sdcard",
                         "/bin/sh", "-c", cleanCmd
                     )
-                    
-                    // تنظیم متغیر محیطی PROOT_TMP_DIR برای رفع خطا
                     pb.environment()["PROOT_TMP_DIR"] = tmpDir.absolutePath
-                    
                     pb.redirectErrorStream(true)
                     val process = pb.start()
                     
@@ -126,9 +132,15 @@ fun TerminalScreen() {
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Color.Black).padding(8.dp)) {
+        // هدر برای دکمه کپی
+        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = { copyAllText() }) {
+                Text("Copy All", color = Color.Cyan, fontSize = 12.sp)
+            }
+        }
+        
         LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
             items(outputLines) { line -> 
-                // 👇 قرار دادن SelectionContainer داخل هر آیتم برای سلکت دقیق و بدون باگ
                 SelectionContainer {
                     Text(
                         text = line, 

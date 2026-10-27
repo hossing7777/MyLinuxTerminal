@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v6.4", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v6.5", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -90,11 +90,33 @@ fun TerminalScreen() {
             }
         }
 
-        val shFile = File(alpineDir, "bin/sh")
-        if (shFile.exists()) {
-            withContext(Dispatchers.Main) { outputLines.add("Debug: /bin/sh exists.") }
-        } else {
-            withContext(Dispatchers.Main) { outputLines.add("Debug: /bin/sh NOT FOUND!") }
+        // 🛠️ ترفند نهایی: کپی دستی فایل‌های حیاتی لینوکس
+        try {
+            val shFile = File(alpineDir, "bin/sh")
+            if (!shFile.exists()) {
+                val busybox = File(alpineDir, "usr/bin/busybox")
+                if (busybox.exists()) {
+                    busybox.copyTo(shFile, overwrite = true)
+                    shFile.setExecutable(true)
+                } else {
+                    val binBusybox = File(alpineDir, "bin/busybox")
+                    if (binBusybox.exists()) {
+                        binBusybox.copyTo(shFile, overwrite = true)
+                        shFile.setExecutable(true)
+                    }
+                }
+            }
+
+            val ldMusl = File(alpineDir, "lib/ld-musl-aarch64.so.1")
+            if (!ldMusl.exists()) {
+                val libcMusl = File(alpineDir, "lib/libc.musl-aarch64.so.1")
+                if (libcMusl.exists()) {
+                    libcMusl.copyTo(ldMusl, overwrite = true)
+                    ldMusl.setExecutable(true)
+                }
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) { outputLines.add("Fix Error: ${e.toString()}") }
         }
 
         withContext(Dispatchers.Main) {
@@ -119,7 +141,8 @@ fun TerminalScreen() {
                     val prootPath = File(context.applicationInfo.nativeLibraryDir, "libproot.so").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
                     
-                    val tmpDir = File(alpinePath, "tmp")
+                    // استفاده از filesDir برای پوشه موقت (نه cacheDir)
+                    val tmpDir = File(context.filesDir, "proot_tmp")
                     if (!tmpDir.exists()) tmpDir.mkdirs()
 
                     val pb = ProcessBuilder(
@@ -224,16 +247,16 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
                     try {
                         Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName))
                     } catch (e: Exception) {
-                        // ⬇️ رفع باگ: مدیریت صحیح لینک‌های نسبی و مطلق
-                        Log.e("Terminal", "Symlink failed: ${entry.name} -> ${entry.linkName}. Trying to copy.")
+                        // اگر لینک ساخته نشد، فایل مقصد را کپی می‌کنیم
                         val targetFile = if (entry.linkName.startsWith("/")) {
                             File(destDir, entry.linkName.removePrefix("/"))
                         } else {
                             File(destFile.parentFile, entry.linkName)
                         }
-                        
                         if (targetFile.exists() && targetFile.isFile) {
                             targetFile.copyTo(destFile, overwrite = true)
+                        } else if (targetFile.exists() && targetFile.isDirectory) {
+                            destFile.mkdirs()
                         }
                     }
                 }

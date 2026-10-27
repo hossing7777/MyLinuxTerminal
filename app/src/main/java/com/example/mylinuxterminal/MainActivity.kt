@@ -16,10 +16,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -63,8 +65,12 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var showPackageDialog by remember { mutableStateOf(false) }
-    var isInstalling by remember { mutableStateOf(false) }
     
+    // متغیرهای مربوط به پیشرفت نصب
+    var isInstalling by remember { mutableStateOf(false) }
+    var installProgress by remember { mutableStateOf(0f) }
+    var installStatus by remember { mutableStateOf("") }
+
     var inputText by remember { mutableStateOf("") }
     var fontSize by remember { mutableStateOf(14.sp) }
     var textColor by remember { mutableStateOf(Color.Green) }
@@ -81,9 +87,11 @@ fun TerminalScreen() {
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
-    // لیست پکیج‌های پیشنهادی و انتخاب‌شده
     val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop")
     val selectedPackages = remember { mutableStateListOf("python3", "git", "nano") }
+
+    // حالت برای کلید CTRL
+    var isCtrlPressed by remember { mutableStateOf(false) }
 
     val manageStorageLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -107,7 +115,7 @@ fun TerminalScreen() {
         outputLines.add("--- Copied ---")
     }
 
-    // شروع فرآیند PTY و شل لینوکس
+    // شروع PTY
     fun startTerminal() {
         if (ptyFd > 0) return
         coroutineScope.launch(Dispatchers.IO) {
@@ -152,19 +160,94 @@ fun TerminalScreen() {
         }
     }
 
-    // نصب پکیج‌ها از طریق PTY (تا پیشرفت در ترمینال دیده شود)
+    // نصب پکیج‌ها با ProcessBuilder و نمایش درصد
     fun installSelectedPackages() {
         isInstalling = true
         showPackageDialog = false
-        if (ptyFd <= 0) startTerminal()
+        outputLines.clear()
         
-        coroutineScope.launch {
-            kotlinx.coroutines.delay(1000) // صبر برای آماده شدن PTY
-            val installCmd = "apk update && apk add ${selectedPackages.joinToString(" ")}\n"
-            ptyProcess.writeData(installCmd)
-            isInstalling = false
-            focusRequester.requestFocus()
-            keyboardController?.show()
+        coroutineScope.launch(Dispatchers.IO) {
+            try {
+                val nativeLibDir = context.applicationInfo.nativeLibraryDir
+                val prootPath = File(nativeLibDir, "libproot.so").absolutePath
+                val loaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
+                val alpinePath = File(context.filesDir, "alpine").absolutePath
+                val tmpDir = File(alpinePath, "tmp")
+
+                // 1. آپدیت مخازن
+                withContext(Dispatchers.Main) { installStatus = "Updating package lists..." }
+                val updatePb = ProcessBuilder(
+                    prootPath, "--kill-on-exit", "--link2symlink", "--sysvipc", "-0",
+                    "-r", alpinePath, "-w", "/", "-b", "/dev", "-b", "/proc", "-b", "/sys",
+                    "/bin/sh", "-c", "apk update"
+                )
+                updatePb.environment()["PROOT_TMP_DIR"] = tmpDir.absolutePath
+                updatePb.environment()["PROOT_NO_SECCOMP"] = "1"
+                updatePb.environment()["PROOT_LOADER"] = loaderPath
+                updatePb.environment()["LD_LIBRARY_PATH"] = nativeLibDir
+                updatePb.redirectErrorStream(true)
+                updatePb.start().waitFor()
+
+                // 2. نصب پکیج‌ها
+                withContext(Dispatchers.Main) { installStatus = "Starting installation..." }
+                val installCmd = "apk add ${selectedPackages.joinToString(" ")}"
+                val pb = ProcessBuilder(
+                    prootPath, "--kill-on-exit", "--link2symlink", "--sysvipc", "-0",
+                    "-r", alpinePath, "-w", "/", "-b", "/dev", "-b", "/proc", "-b", "/sys",
+                    "/bin/sh", "-c", installCmd
+                )
+                val env = pb.environment()
+                env["PROOT_TMP_DIR"] = tmpDir.absolutePath
+                env["PROOT_NO_SECCOMP"] = "1"
+                env["PROOT_LOADER"] = loaderPath
+                env["LD_LIBRARY_PATH"] = nativeLibDir
+                env.remove("LD_PRELOAD")
+                
+                pb.redirectErrorStream(true)
+                val process = pb.start()
+                val reader = BufferedReader(InputStreamReader(process.inputStream))
+                
+                var line = reader.readLine()
+                val regex = Regex("""\((\d+)/(\d+)\)""")
+
+                while (line != null) {
+                    val currentLine = line
+                    // بررسی اینکه آیا خط شامل (1/15) است یا خیر
+                    val match = regex.find(currentLine)
+                    if (match != null) {
+                        val current = match.groupValues[1].toIntOrNull() ?: 0
+                        val total = match.groupValues[2].toIntOrNull() ?: 1
+                        if (total > 0) {
+                            val progress = current.toFloat() / total.toFloat()
+                            withContext(Dispatchers.Main) {
+                                installProgress = progress
+                                installStatus = "Installing packages ($current/$total)..."
+                            }
+                        }
+                    }
+                    
+                    withContext(Dispatchers.Main) { outputLines.add(currentLine) }
+                    line = reader.readLine()
+                }
+                
+                process.waitFor()
+                
+                withContext(Dispatchers.Main) {
+                    installProgress = 1f
+                    installStatus = "Packages installed successfully!"
+                    isInstalling = false
+                    isExtracted = true
+                    // حالا که نصب تمام شد، ترمینال را اجرا می‌کنیم
+                    startTerminal()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { 
+                    outputLines.add("Install Error: ${e.toString()}")
+                    isInstalling = false
+                    isExtracted = true // اجازه دسترسی به ترمینال حتی در صورت خطا
+                    startTerminal()
+                }
+            }
         }
     }
 
@@ -185,8 +268,7 @@ fun TerminalScreen() {
         fixAlpineStructure(alpineDir)
 
         withContext(Dispatchers.Main) {
-            isExtracted = true
-            showPackageDialog = true // نمایش پنجره انتخاب پکیج
+            showPackageDialog = true
             checkStoragePermission()
         }
     }
@@ -224,7 +306,7 @@ fun TerminalScreen() {
         )
     }
 
-    // پنجره تنظیمات اصلی
+    // پنجره تنظیمات
     if (showSettings) {
         AlertDialog(
             onDismissRequest = { showSettings = false },
@@ -263,11 +345,29 @@ fun TerminalScreen() {
     }
 
     Column(modifier = Modifier.fillMaxSize().background(bgColor).padding(8.dp)) {
+        // هدر (دکمه‌های کپی و تنظیمات)
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             TextButton(onClick = { copyAllText() }) { Text("Copy All", color = Color.Cyan, fontSize = 12.sp) }
             TextButton(onClick = { showSettings = true }) { Text("⚙️ Settings", color = Color.Cyan, fontSize = 12.sp) }
         }
+
+        // نوار پیشرفت نصب
+        if (isInstalling) {
+            Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                Text(installStatus, color = Color.Cyan, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                Spacer(modifier = Modifier.height(4.dp))
+                LinearProgressIndicator(
+                    progress = installProgress,
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color.Green,
+                    trackColor = Color.DarkGray
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text("${(installProgress * 100).toInt()}%", color = Color.Green, fontSize = 10.sp)
+            }
+        }
         
+        // نمایش خروجی ترمینال
         LazyColumn(
             state = listState, 
             modifier = Modifier.weight(1f).pointerInput(Unit) {
@@ -281,22 +381,64 @@ fun TerminalScreen() {
             }
         }
         
-        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf("TAB" to "\t", "CTRL+C" to "\u0003").forEach { (label, char) ->
-                TextButton(
-                    onClick = { ptyProcess.writeData(char); focusRequester.requestFocus() }, 
-                    modifier = Modifier.weight(1f)
+        // کلیدهای کمکی (استاندارد و اسکرول‌شونده)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            // دکمه‌های استاندارد کیبورد
+            val keys = listOf(
+                "ESC" to "\u001b", "TAB" to "\t", "/" to "/", "-" to "-",
+                "UP" to "\u001b[A", "DOWN" to "\u001b[B", "LEFT" to "\u001b[D", "RIGHT" to "\u001b[C"
+            )
+            
+            keys.forEach { (label, code) ->
+                Button(
+                    onClick = { ptyProcess.writeData(code); focusRequester.requestFocus() },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.height(32.dp)
                 ) {
-                    Text(text = label, color = Color.LightGray, fontSize = 12.sp)
+                    Text(text = label, color = Color.White, fontSize = 10.sp)
                 }
+            }
+
+            // دکمه CTRL (خاص)
+            Button(
+                onClick = { isCtrlPressed = !isCtrlPressed },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isCtrlPressed) Color.Red else Color.DarkGray
+                ),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Text(text = "CTRL", color = Color.White, fontSize = 10.sp)
             }
         }
 
+        // ورودی متن
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(text = "$ ", color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize)
             BasicTextField(
                 value = inputText, 
-                onValueChange = { inputText = it },
+                onValueChange = { newText -> 
+                    if (isCtrlPressed) {
+                        // اگر CTRL فعال است، کاراکتر کنترل را بفرست
+                        val ctrlChar = when (newText.lastOrNull()?.uppercaseChar()) {
+                            'C' -> "\u0003"
+                            'D' -> "\u0004"
+                            'Z' -> "\u001a"
+                            else -> newText
+                        }
+                        ptyProcess.writeData(ctrlChar)
+                        isCtrlPressed = false
+                        inputText = ""
+                    } else {
+                        inputText = newText
+                    }
+                },
                 textStyle = TextStyle(color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize),
                 modifier = Modifier.weight(1f).focusRequester(focusRequester),
                 singleLine = true, 

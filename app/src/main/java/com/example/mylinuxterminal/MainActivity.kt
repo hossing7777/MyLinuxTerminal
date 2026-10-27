@@ -54,7 +54,9 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.6", "Initializing...") }
+    var currentDir by remember { mutableStateOf("/root") } // مسیر پیش‌فرض لینوکس
+    
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.7", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -92,12 +94,6 @@ fun TerminalScreen() {
 
         fixAlpineStructure(alpineDir)
 
-        val shFile = File(alpineDir, "bin/sh")
-        val lsFile = File(alpineDir, "bin/ls")
-        withContext(Dispatchers.Main) { 
-            outputLines.add("Debug: sh = ${shFile.length()}B, ls = ${lsFile.length()}B") 
-        }
-
         withContext(Dispatchers.Main) {
             isExtracted = true
             listState.animateScrollToItem(outputLines.size - 1)
@@ -112,7 +108,8 @@ fun TerminalScreen() {
         val cleanCmd = cmd.trim()
         if (cleanCmd.isEmpty() || !isExtracted) return
         if (cleanCmd == "clear") { outputLines.clear(); return }
-        outputLines.add("root@alpine:~# $cleanCmd")
+        
+        outputLines.add("root@alpine:$currentDir# $cleanCmd")
 
         coroutineScope.launch {
             val result = withContext(Dispatchers.IO) {
@@ -122,6 +119,9 @@ fun TerminalScreen() {
                     val loaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
                     val tmpDir = File(alpinePath, "tmp")
+
+                    // 👇 اجرای دستور در مسیر فعلی و چاپ مسیر جدید در انتها
+                    val fullCmd = "cd \"$currentDir\" 2>/dev/null; $cleanCmd; echo \"__PWD__\"; pwd"
 
                     val pb = ProcessBuilder(
                         prootPath,
@@ -134,7 +134,7 @@ fun TerminalScreen() {
                         "-b", "/dev",
                         "-b", "/proc",
                         "-b", "/sys",
-                        "/bin/sh", "-c", cleanCmd
+                        "/bin/sh", "-c", fullCmd
                     )
                     
                     val env = pb.environment()
@@ -142,12 +142,9 @@ fun TerminalScreen() {
                     env["PROOT_NO_SECCOMP"] = "1"
                     env["PROOT_LOADER"] = loaderPath
                     env["LD_LIBRARY_PATH"] = nativeLibDir
-                    
-                    // 👇 خطوط جادویی: تنظیم متغیرهای محیطی لینوکس
                     env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
                     env["HOME"] = "/root"
                     env["TERM"] = "xterm-256color"
-                    
                     env.remove("LD_PRELOAD")
                     
                     pb.redirectErrorStream(true)
@@ -158,10 +155,34 @@ fun TerminalScreen() {
                     var line: String?
                     while (reader.readLine().also { line = it } != null) { output.append(line).append("\n") }
                     process.waitFor()
-                    output.toString().trim()
-                } catch (e: Exception) { "Error: ${e.toString()}" }
+                    
+                    // پردازش خروجی برای پیدا کردن مسیر جدید
+                    val rawOutput = output.toString().trim()
+                    val lines = rawOutput.lines()
+                    var newDir = currentDir
+                    val displayOutput = mutableListOf<String>()
+
+                    if (lines.size >= 2 && lines[lines.size - 2] == "__PWD__") {
+                        newDir = lines.last() // مسیر جدید
+                        displayOutput.addAll(lines.dropLast(2)) // حذف خطوط کمکی
+                    } else {
+                        displayOutput.addAll(lines)
+                    }
+
+                    Pair(newDir, displayOutput.joinToString("\n").trim())
+                } catch (e: Exception) { 
+                    Pair(currentDir, "Error: ${e.toString()}") 
+                }
             }
-            if (result.isNotEmpty()) { outputLines.add(result) }
+            
+            // آپدیت مسیر فعلی
+            if (result.first != currentDir && result.first.isNotEmpty()) {
+                currentDir = result.first
+            }
+            // نمایش خروجی دستور
+            if (result.second.isNotEmpty()) { 
+                outputLines.add(result.second) 
+            }
             listState.animateScrollToItem(outputLines.size - 1)
         }
     }
@@ -182,7 +203,8 @@ fun TerminalScreen() {
         }
         
         Row(modifier = Modifier.fillMaxWidth()) {
-            Text(text = "root@alpine:~# ", color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
+            // پرامپت داینامیک که مسیر فعلی را نشان می‌دهد
+            Text(text = "root@alpine:$currentDir# ", color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
             BasicTextField(
                 value = inputText, 
                 onValueChange = { inputText = it },

@@ -164,7 +164,7 @@ fun TerminalScreen() {
             outputLines.add("Installing essential packages (python3, git, nano)... This may take a minute.")
         }
 
-        // نصب خودکار پکیج‌ها با ProcessBuilder (چون PTY هنوز آماده نیست)
+        // نصب خودکار پکیج‌ها
         try {
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
             val prootPath = File(nativeLibDir, "libproot.so").absolutePath
@@ -188,10 +188,15 @@ fun TerminalScreen() {
             pb.redirectErrorStream(true)
             val process = pb.start()
             val reader = BufferedReader(InputStreamReader(process.inputStream))
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                withContext(Dispatchers.Main) { outputLines.add(line) }
+            
+            // 👇 رفع خطای String? به String
+            var line = reader.readLine()
+            while (line != null) {
+                val finalLine = line 
+                withContext(Dispatchers.Main) { outputLines.add(finalLine) }
+                line = reader.readLine()
             }
+            
             process.waitFor()
             withContext(Dispatchers.Main) { outputLines.add("Packages installed successfully!") }
         } catch (e: Exception) {
@@ -208,7 +213,6 @@ fun TerminalScreen() {
 
     LaunchedEffect(Unit) { extractLinuxAndInstall() }
 
-    // تنظیمات UI
     if (showSettings) {
         AlertDialog(
             onDismissRequest = { showSettings = false },
@@ -258,7 +262,6 @@ fun TerminalScreen() {
             }
         }
         
-        // کلیدهای کمکی
         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             listOf("TAB" to "\t", "CTRL+C" to "\u0003").forEach { (label, char) ->
                 TextButton(onClick = { ptyProcess.writeData(char); focusRequester.requestFocus() }, modifier = Modifier.weight(1f)) {

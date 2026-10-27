@@ -1,12 +1,20 @@
 package com.example.mylinuxterminal
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
@@ -59,12 +67,33 @@ fun TerminalScreen() {
     var currentDir by remember { mutableStateOf("/root") }
     var fontSize by remember { mutableStateOf(14.sp) }
     
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v8.0", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v8.1", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+
+    // 👇 درخواست مجوز دسترسی به فایل‌ها (برای اندروید ۱۱ به بالا)
+    val manageStorageLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (Environment.isExternalStorageManager()) {
+            outputLines.add("Storage permission granted! /sdcard is ready.")
+        } else {
+            outputLines.add("Storage permission denied. /sdcard may not work.")
+        }
+    }
+
+    fun checkStoragePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (!Environment.isExternalStorageManager()) {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                intent.data = Uri.parse("package:${context.packageName}")
+                manageStorageLauncher.launch(intent)
+            }
+        }
+    }
 
     fun copyAllText() {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -102,6 +131,7 @@ fun TerminalScreen() {
             listState.animateScrollToItem(outputLines.size - 1)
             focusRequester.requestFocus()
             keyboardController?.show()
+            checkStoragePermission() // درخواست مجوز در زمان اجرا
         }
     }
 
@@ -136,7 +166,7 @@ fun TerminalScreen() {
                         "-b", "/dev",
                         "-b", "/proc",
                         "-b", "/sys",
-                        // 👇 خط /system/etc/resolv.conf حذف شد
+                        "-b", "/storage/emulated/0:/sdcard", // اتصال حافظه
                         "/bin/sh", "-c", fullCmd
                     )
                     
@@ -268,7 +298,7 @@ fun fixAlpineStructure(alpineDir: File) {
                 "sh", "ls", "cat", "echo", "pwd", "mkdir", "rm", "cp", "mv", 
                 "chmod", "chown", "sed", "grep", "awk", "env", "uname", 
                 "sleep", "kill", "ps", "ln", "df", "du", "head", "tail", 
-                "touch", "date", "clear", "mount", "id", "whoami", "find", "vi"
+                "touch", "date", "clear", "mount", "id", "whoami", "find", "vi", "nano"
             )
             
             for (applet in applets) {

@@ -2,8 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     android:extractNativeLibs="true">
 
-    <!-- 👇 این خط مجوز دسترسی به اینترنت را به برنامه می‌دهد -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 👇 مجوز دسترسی به تمام فایل‌های گوشی -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <application
         android:allowBackup="true"

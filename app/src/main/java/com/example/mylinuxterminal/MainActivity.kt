@@ -38,50 +38,69 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun TerminalScreen() {
     val context = LocalContext.current
-    val initialDir = remember { context.filesDir.absolutePath }
-    
+    var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    var currentDir by remember { mutableStateOf(initialDir) }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v1.0", "Type 'ls', 'pwd', 'cd ..', 'mkdir test', or 'clear'") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v1.0", "Initializing Alpine Linux... Please wait.") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
 
-    fun getPrompt(): String {
-        val displayPath = if (currentDir == initialDir) "~" else currentDir.replace(initialDir, "~")
-        return "root@android:$displayPath# "
+    suspend fun extractLinux() = withContext(Dispatchers.IO) {
+        val prootFile = File(context.filesDir, "proot")
+        val alpineDir = File(context.filesDir, "alpine")
+        val tarFile = File(context.filesDir, "alpine.tar.gz")
+
+        if (!prootFile.exists() || !alpineDir.exists()) {
+            try {
+                context.assets.open("proot").use { input ->
+                    prootFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                prootFile.setExecutable(true)
+
+                context.assets.open("alpine.tar.gz").use { input ->
+                    tarFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                if (!alpineDir.exists()) alpineDir.mkdirs()
+                
+                val process = Runtime.getRuntime().exec("tar -xzf ${tarFile.absolutePath} -C ${alpineDir.absolutePath}")
+                process.waitFor()
+                tarFile.delete()
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { outputLines.add("Extraction Error: ${e.message}") }
+            }
+        }
+        withContext(Dispatchers.Main) {
+            isExtracted = true
+            outputLines.add("Alpine Linux initialized successfully!")
+            outputLines.add("You can now use 'apk add <package>' to install tools.")
+            listState.animateScrollToItem(outputLines.size - 1)
+        }
     }
+
+    LaunchedEffect(Unit) { extractLinux() }
 
     fun runCommand(cmd: String) {
         val cleanCmd = cmd.trim()
-        if (cleanCmd.isEmpty()) return
+        if (cleanCmd.isEmpty() || !isExtracted) return
         
-        // ۱. مدیریت دستور clear
         if (cleanCmd == "clear") {
             outputLines.clear()
             return
         }
         
-        outputLines.add(getPrompt() + cleanCmd)
+        outputLines.add("root@alpine:~# $cleanCmd")
 
-        // ۲. مدیریت دستور cd
-        if (cleanCmd.startsWith("cd ")) {
-            val path = cleanCmd.substring(3).trim()
-            val newDir = if (path.startsWith("/")) File(path) else File(currentDir, path)
-            if (newDir.exists() && newDir.isDirectory) {
-                currentDir = newDir.canonicalPath
-            } else {
-                outputLines.add("cd: no such file or directory: $path")
-            }
-            return
-        }
-
-        // ۳. اجرای سایر دستورات در پس‌زمینه
         coroutineScope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
-                    val pb = ProcessBuilder("sh", "-c", cleanCmd)
-                    pb.directory(File(currentDir)) // اجرای دستور در پوشه فعلی
-                    pb.redirectErrorStream(true) // ادغام خروجی و خطاها
+                    val prootPath = File(context.filesDir, "proot").absolutePath
+                    val alpinePath = File(context.filesDir, "alpine").absolutePath
+                    
+                    val pb = ProcessBuilder(
+                        prootPath, "-r", alpinePath, "-0", "-w", "/",
+                        "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "/storage/emulated/0:/sdcard",
+                        "/bin/sh", "-c", cleanCmd
+                    )
+                    pb.redirectErrorStream(true)
                     val process = pb.start()
                     
                     val reader = BufferedReader(InputStreamReader(process.inputStream))
@@ -124,7 +143,7 @@ fun TerminalScreen() {
         
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = getPrompt(),
+                text = "root@alpine:~# ",
                 color = Color.Green,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 14.sp
@@ -135,6 +154,7 @@ fun TerminalScreen() {
                 textStyle = TextStyle(color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 14.sp),
                 modifier = Modifier.weight(1f),
                 singleLine = true,
+                enabled = isExtracted,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = {
                     runCommand(inputText)

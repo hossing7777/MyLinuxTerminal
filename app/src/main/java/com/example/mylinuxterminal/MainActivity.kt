@@ -21,6 +21,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -39,18 +40,15 @@ fun TerminalScreen() {
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
 
-    // تابع اجرای دستور در پس‌زمینه
     fun runCommand(cmd: String) {
         val cleanCmd = cmd.trim()
         if (cleanCmd.isEmpty()) return
         
-        // اضافه کردن دستور کاربر به خروجی
         outputLines.add("root@android:~# $cleanCmd")
         
         coroutineScope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
-                    // اجرای دستور در محیط شل اندروید
                     val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", cleanCmd))
                     val reader = BufferedReader(InputStreamReader(process.inputStream))
                     val errorReader = BufferedReader(InputStreamReader(process.errorStream))
@@ -69,7 +67,6 @@ fun TerminalScreen() {
             if (result.isNotEmpty()) {
                 outputLines.add(result)
             }
-            // اسکرول خودکار به پایین
             listState.animateScrollToItem(outputLines.size - 1)
         }
     }

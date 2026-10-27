@@ -57,11 +57,9 @@ fun TerminalScreen() {
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
     var currentDir by remember { mutableStateOf("/root") }
-    
-    // 👇 متغیر جدید برای اندازه فونت
     var fontSize by remember { mutableStateOf(14.sp) }
     
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.8", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.9", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -138,6 +136,8 @@ fun TerminalScreen() {
                         "-b", "/dev",
                         "-b", "/proc",
                         "-b", "/sys",
+                        // 👇 اتصال پوشه اینترنت اندروید برای اطمینان از کارکرد شبکه
+                        "-b", "/system/etc/resolv.conf:/etc/resolv.conf", 
                         "/bin/sh", "-c", fullCmd
                     )
                     
@@ -195,14 +195,12 @@ fun TerminalScreen() {
             }
         }
         
-        // 👇 اعمال قابلیت زوم روی بخش نمایش متن‌ها (LazyColumn)
         LazyColumn(
             state = listState, 
             modifier = Modifier
                 .weight(1f)
                 .pointerInput(Unit) {
                     detectTransformGestures { _, _, zoom, _ ->
-                        // محدود کردن زوم بین 8 تا 36 اس‌پی
                         val newSize = fontSize.value * zoom
                         fontSize = newSize.coerceIn(8f, 36f).sp
                     }
@@ -210,12 +208,7 @@ fun TerminalScreen() {
         ) {
             items(outputLines) { line -> 
                 SelectionContainer {
-                    Text(
-                        text = line, 
-                        color = Color.Green, 
-                        fontFamily = FontFamily.Monospace, 
-                        fontSize = fontSize // 👈 اعمال سایز داینامیک
-                    ) 
+                    Text(text = line, color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = fontSize) 
                 }
             }
         }
@@ -225,16 +218,12 @@ fun TerminalScreen() {
                 text = "root@alpine:$currentDir# ", 
                 color = Color.Green, 
                 fontFamily = FontFamily.Monospace, 
-                fontSize = fontSize // 👈 پرامپت هم با زوم بزرگ/کوچک می‌شود
+                fontSize = fontSize 
             )
             BasicTextField(
                 value = inputText, 
                 onValueChange = { inputText = it },
-                textStyle = TextStyle(
-                    color = Color.Green, 
-                    fontFamily = FontFamily.Monospace, 
-                    fontSize = fontSize // 👈 متن ورودی هم با زوم تغییر می‌کند
-                ),
+                textStyle = TextStyle(color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = fontSize),
                 modifier = Modifier.weight(1f).focusRequester(focusRequester),
                 singleLine = true, 
                 enabled = isExtracted,
@@ -254,11 +243,19 @@ fun fixAlpineStructure(alpineDir: File) {
         val binDir = File(alpineDir, "bin")
         val usrBinDir = File(alpineDir, "usr/bin")
         val libDir = File(alpineDir, "lib")
+        val etcDir = File(alpineDir, "etc")
         
         if (binDir.exists() && !binDir.isDirectory) binDir.delete()
         binDir.mkdirs()
         if (usrBinDir.exists() && !usrBinDir.isDirectory) usrBinDir.delete()
         usrBinDir.mkdirs()
+        if (!etcDir.exists()) etcDir.mkdirs()
+
+        // 👇 تنظیم DNS برای دسترسی به اینترنت
+        val resolvConf = File(etcDir, "resolv.conf")
+        if (!resolvConf.exists() || resolvConf.length() == 0L) {
+            resolvConf.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\nnameserver 9.9.9.9\n")
+        }
 
         var busybox = File(binDir, "busybox")
         if (!busybox.exists() || busybox.length() < 100000L) {

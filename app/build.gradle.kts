@@ -8,6 +8,7 @@ android {
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.8" }
     packaging { jniLibs { useLegacyPackaging = true } }
+    androidResources { noCompress += "tar.gz" } // جلوگیری از خراب شدن فایل لینوکس
 }
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")

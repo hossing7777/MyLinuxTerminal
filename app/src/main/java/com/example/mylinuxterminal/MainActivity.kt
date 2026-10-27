@@ -66,7 +66,11 @@ fun TerminalScreen() {
     var currentDir by remember { mutableStateOf("/root") }
     var fontSize by remember { mutableStateOf(14.sp) }
     
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v8.2", "Initializing...") }
+    // 👇 مدیریت تاریخچه دستورات برای کلیدهای بالا/پایین
+    val commandHistory = remember { mutableStateListOf<String>() }
+    var historyIndex by remember { mutableStateOf(-1) }
+
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v8.3", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -142,6 +146,12 @@ fun TerminalScreen() {
         if (cleanCmd.isEmpty() || !isExtracted) return
         if (cleanCmd == "clear") { outputLines.clear(); return }
         
+        // ذخیره در تاریخچه
+        if (commandHistory.isEmpty() || commandHistory.last() != cleanCmd) {
+            commandHistory.add(cleanCmd)
+        }
+        historyIndex = -1 // ریست کردن ایندکس
+
         outputLines.add("root@alpine:$currentDir# $cleanCmd")
 
         coroutineScope.launch {
@@ -156,18 +166,9 @@ fun TerminalScreen() {
                     val fullCmd = "cd \"$currentDir\" 2>/dev/null; $cleanCmd; echo \"__PWD__\"; pwd"
 
                     val pb = ProcessBuilder(
-                        prootPath,
-                        "--kill-on-exit",
-                        "--link2symlink",
-                        "--sysvipc",
-                        "-0",
-                        "-r", alpinePath,
-                        "-w", "/",
-                        "-b", "/dev",
-                        "-b", "/proc",
-                        "-b", "/sys",
-                        "-b", "/storage/emulated/0:/sdcard",
-                        "/bin/sh", "-c", fullCmd
+                        prootPath, "--kill-on-exit", "--link2symlink", "--sysvipc", "-0",
+                        "-r", alpinePath, "-w", "/", "-b", "/dev", "-b", "/proc", "-b", "/sys",
+                        "-b", "/storage/emulated/0:/sdcard", "/bin/sh", "-c", fullCmd
                     )
                     
                     val env = pb.environment()
@@ -200,19 +201,14 @@ fun TerminalScreen() {
                     } else {
                         displayOutput.addAll(lines)
                     }
-
                     Pair(newDir, displayOutput.joinToString("\n").trim())
                 } catch (e: Exception) { 
                     Pair(currentDir, "Error: ${e.toString()}") 
                 }
             }
             
-            if (result.first != currentDir && result.first.isNotEmpty()) {
-                currentDir = result.first
-            }
-            if (result.second.isNotEmpty()) { 
-                outputLines.add(result.second) 
-            }
+            if (result.first != currentDir && result.first.isNotEmpty()) { currentDir = result.first }
+            if (result.second.isNotEmpty()) { outputLines.add(result.second) }
             listState.animateScrollToItem(outputLines.size - 1)
         }
     }
@@ -242,13 +238,56 @@ fun TerminalScreen() {
             }
         }
         
-        Row(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = "root@alpine:$currentDir# ", 
-                color = Color.Green, 
-                fontFamily = FontFamily.Monospace, 
-                fontSize = fontSize 
+        // 👇 ردیف کلیدهای کمکی
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            val helperKeys = listOf(
+                "TAB" to "\t",
+                "CTRL+C" to "\u0003", // کاراکتر کنترل C
+                "UP" to "", // هندل کردن جداگانه
+                "DOWN" to "" // هندل کردن جداگانه
             )
+
+            helperKeys.forEach { (label, char) ->
+                TextButton(
+                    onClick = {
+                        when (label) {
+                            "TAB" -> inputText += char
+                            "CTRL+C" -> {
+                                inputText += char
+                                outputLines.add("root@alpine:$currentDir# $inputText^C")
+                                inputText = ""
+                            }
+                            "UP" -> {
+                                if (commandHistory.isNotEmpty()) {
+                                    if (historyIndex == -1) historyIndex = commandHistory.size - 1
+                                    else if (historyIndex > 0) historyIndex--
+                                    inputText = commandHistory[historyIndex]
+                                }
+                            }
+                            "DOWN" -> {
+                                if (commandHistory.isNotEmpty()) {
+                                    if (historyIndex < commandHistory.size - 1) historyIndex++
+                                    else historyIndex = -1
+                                    inputText = if (historyIndex == -1) "" else commandHistory[historyIndex]
+                                }
+                            }
+                        }
+                        focusRequester.requestFocus()
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(text = label, color = Color.LightGray, fontSize = 12.sp)
+                }
+            }
+        }
+
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Text(text = "root@alpine:$currentDir# ", color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = fontSize)
             BasicTextField(
                 value = inputText, 
                 onValueChange = { inputText = it },
@@ -288,9 +327,7 @@ fun fixAlpineStructure(alpineDir: File) {
         var busybox = File(binDir, "busybox")
         if (!busybox.exists() || busybox.length() < 100000L) {
             val usrBusybox = File(usrBinDir, "busybox")
-            if (usrBusybox.exists() && usrBusybox.length() > 100000L) {
-                busybox = usrBusybox
-            }
+            if (usrBusybox.exists() && usrBusybox.length() > 100000L) busybox = usrBusybox
         }
 
         if (busybox.exists() && busybox.length() > 100000L) {
@@ -370,8 +407,7 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
             } else if (entry.isSymbolicLink) {
                 try {
                     Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName))
-                } catch (e: Exception) {
-                }
+                } catch (e: Exception) {}
             } else {
                 destFile.parentFile?.mkdirs()
                 destFile.outputStream().use { output -> tarIn.copyTo(output) }

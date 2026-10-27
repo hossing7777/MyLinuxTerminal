@@ -33,7 +33,6 @@ Java_com_example_mylinuxterminal_PtyProcess_createPty(JNIEnv *env, jobject thiz,
         dup2(slave_fd, 2);
         if (slave_fd > 2) close(slave_fd);
 
-        // اجرای مستقیم دستور در پروسه فرزند
         execl("/system/bin/sh", "sh", "-c", cmd_str, NULL);
         _exit(1);
     }

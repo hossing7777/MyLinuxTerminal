@@ -66,7 +66,6 @@ fun TerminalScreen() {
     var isExtracted by remember { mutableStateOf(false) }
     var showPackageDialog by remember { mutableStateOf(false) }
     
-    // متغیرهای مربوط به پیشرفت نصب
     var isInstalling by remember { mutableStateOf(false) }
     var installProgress by remember { mutableStateOf(0f) }
     var installStatus by remember { mutableStateOf("") }
@@ -79,18 +78,14 @@ fun TerminalScreen() {
     
     val ptyProcess = remember { PtyProcess() }
     var ptyFd by remember { mutableStateOf(-1) }
-    
     val outputLines = remember { mutableStateListOf<String>() }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
-    
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
     val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop")
     val selectedPackages = remember { mutableStateListOf("python3", "git", "nano") }
-
-    // حالت برای کلید CTRL
     var isCtrlPressed by remember { mutableStateOf(false) }
 
     val manageStorageLauncher = rememberLauncherForActivityResult(
@@ -115,9 +110,19 @@ fun TerminalScreen() {
         outputLines.add("--- Copied ---")
     }
 
-    // شروع PTY
-    fun startTerminal() {
-        if (ptyFd > 0) return
+    // شروع و مدیریت PTY
+    fun startTerminal(packagesToInstall: List<String> = emptyList()) {
+        if (ptyFd > 0) {
+            if (packagesToInstall.isNotEmpty()) {
+                // اگر ترمینال باز است، فقط دستور نصب را بفرست
+                coroutineScope.launch(Dispatchers.IO) {
+                    withContext(Dispatchers.Main) { isInstalling = true; installProgress = 0f; installStatus = "Installing packages..." }
+                    ptyProcess.writeData("apk add ${packagesToInstall.joinToString(" ")}\n")
+                }
+            }
+            return
+        }
+
         coroutineScope.launch(Dispatchers.IO) {
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
             val prootPath = File(nativeLibDir, "libproot.so").absolutePath
@@ -125,6 +130,14 @@ fun TerminalScreen() {
             val alpinePath = File(context.filesDir, "alpine").absolutePath
             val tmpDir = File(alpinePath, "tmp")
             val scriptFile = File(context.filesDir, "start.sh")
+
+            // ساخت دستور برای اجرای نصب و سپس ورود به شل
+            val installCmd = if (packagesToInstall.isNotEmpty()) {
+                "apk update && apk add ${packagesToInstall.joinToString(" ")} && echo '::DONE::' ; exec /bin/sh"
+            } else {
+                "exec /bin/sh"
+            }
+            val finalCmd = installCmd.replace("\"", "\\\"")
 
             scriptFile.writeText("""
                 export PROOT_TMP_DIR=$tmpDir
@@ -134,118 +147,64 @@ fun TerminalScreen() {
                 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
                 export HOME=/root
                 export TERM=xterm-256color
-                exec $prootPath --kill-on-exit --link2symlink --sysvipc -0 -r $alpinePath -w / -b /dev -b /proc -b /sys -b /storage/emulated/0:/sdcard /bin/sh
+                exec $prootPath --kill-on-exit --link2symlink --sysvipc -0 -r $alpinePath -w / -b /dev -b /proc -b /sys -b /storage/emulated/0:/sdcard /bin/sh -c "$finalCmd"
             """.trimIndent())
             scriptFile.setExecutable(true)
+
+            withContext(Dispatchers.Main) { 
+                outputLines.clear()
+                outputLines.add("Starting terminal engine...")
+            }
 
             ptyFd = ptyProcess.createPty("sh ${scriptFile.absolutePath}")
             if (ptyFd > 0) {
                 val buf = ByteArray(4096)
+                val regex = Regex("""\((\d+)/(\d+)\)""")
+                val buffer = StringBuilder()
+
                 while (true) {
                     val len = ptyProcess.readData(buf)
                     if (len > 0) {
                         val text = String(buf, 0, len)
                         val cleanText = text.replace("\r\n", "\n").replace("\r", "")
-                        withContext(Dispatchers.Main) { 
-                            if (outputLines.isNotEmpty()) {
-                                val lastLine = outputLines.removeAt(outputLines.size - 1)
-                                outputLines.add(lastLine + cleanText)
-                            } else {
-                                outputLines.add(cleanText)
+                        buffer.append(cleanText)
+
+                        // پردازش خط به خط
+                        while (buffer.contains("\n")) {
+                            val idx = buffer.indexOf("\n")
+                            val line = buffer.substring(0, idx)
+                            buffer.delete(0, idx + 1)
+
+                            withContext(Dispatchers.Main) {
+                                if (line.contains("::DONE::")) {
+                                    isInstalling = false
+                                    installProgress = 1f
+                                    installStatus = "Done!"
+                                } else {
+                                    val match = regex.find(line)
+                                    if (match != null && isInstalling) {
+                                        val current = match.groupValues[1].toIntOrNull() ?: 0
+                                        val total = match.groupValues[2].toIntOrNull() ?: 1
+                                        if (total > 0) installProgress = current.toFloat() / total.toFloat()
+                                        installStatus = "Installing ($current/$total)..."
+                                    }
+                                    if (line.isNotBlank()) {
+                                        outputLines.add(line)
+                                        listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // اگر بافر شامل پرامپت بود (بدون خط جدید)
+                        if (buffer.contains("# ") || buffer.contains("$ ")) {
+                            withContext(Dispatchers.Main) {
+                                outputLines.add(buffer.toString())
+                                buffer.clear()
+                                listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
                             }
                         }
                     } else if (len < 0) break
-                }
-            }
-        }
-    }
-
-    // نصب پکیج‌ها با ProcessBuilder و نمایش درصد
-    fun installSelectedPackages() {
-        isInstalling = true
-        showPackageDialog = false
-        outputLines.clear()
-        
-        coroutineScope.launch(Dispatchers.IO) {
-            try {
-                val nativeLibDir = context.applicationInfo.nativeLibraryDir
-                val prootPath = File(nativeLibDir, "libproot.so").absolutePath
-                val loaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
-                val alpinePath = File(context.filesDir, "alpine").absolutePath
-                val tmpDir = File(alpinePath, "tmp")
-
-                // 1. آپدیت مخازن
-                withContext(Dispatchers.Main) { installStatus = "Updating package lists..." }
-                val updatePb = ProcessBuilder(
-                    prootPath, "--kill-on-exit", "--link2symlink", "--sysvipc", "-0",
-                    "-r", alpinePath, "-w", "/", "-b", "/dev", "-b", "/proc", "-b", "/sys",
-                    "/bin/sh", "-c", "apk update"
-                )
-                updatePb.environment()["PROOT_TMP_DIR"] = tmpDir.absolutePath
-                updatePb.environment()["PROOT_NO_SECCOMP"] = "1"
-                updatePb.environment()["PROOT_LOADER"] = loaderPath
-                updatePb.environment()["LD_LIBRARY_PATH"] = nativeLibDir
-                updatePb.redirectErrorStream(true)
-                updatePb.start().waitFor()
-
-                // 2. نصب پکیج‌ها
-                withContext(Dispatchers.Main) { installStatus = "Starting installation..." }
-                val installCmd = "apk add ${selectedPackages.joinToString(" ")}"
-                val pb = ProcessBuilder(
-                    prootPath, "--kill-on-exit", "--link2symlink", "--sysvipc", "-0",
-                    "-r", alpinePath, "-w", "/", "-b", "/dev", "-b", "/proc", "-b", "/sys",
-                    "/bin/sh", "-c", installCmd
-                )
-                val env = pb.environment()
-                env["PROOT_TMP_DIR"] = tmpDir.absolutePath
-                env["PROOT_NO_SECCOMP"] = "1"
-                env["PROOT_LOADER"] = loaderPath
-                env["LD_LIBRARY_PATH"] = nativeLibDir
-                env.remove("LD_PRELOAD")
-                
-                pb.redirectErrorStream(true)
-                val process = pb.start()
-                val reader = BufferedReader(InputStreamReader(process.inputStream))
-                
-                var line = reader.readLine()
-                val regex = Regex("""\((\d+)/(\d+)\)""")
-
-                while (line != null) {
-                    val currentLine = line
-                    // بررسی اینکه آیا خط شامل (1/15) است یا خیر
-                    val match = regex.find(currentLine)
-                    if (match != null) {
-                        val current = match.groupValues[1].toIntOrNull() ?: 0
-                        val total = match.groupValues[2].toIntOrNull() ?: 1
-                        if (total > 0) {
-                            val progress = current.toFloat() / total.toFloat()
-                            withContext(Dispatchers.Main) {
-                                installProgress = progress
-                                installStatus = "Installing packages ($current/$total)..."
-                            }
-                        }
-                    }
-                    
-                    withContext(Dispatchers.Main) { outputLines.add(currentLine) }
-                    line = reader.readLine()
-                }
-                
-                process.waitFor()
-                
-                withContext(Dispatchers.Main) {
-                    installProgress = 1f
-                    installStatus = "Packages installed successfully!"
-                    isInstalling = false
-                    isExtracted = true
-                    // حالا که نصب تمام شد، ترمینال را اجرا می‌کنیم
-                    startTerminal()
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) { 
-                    outputLines.add("Install Error: ${e.toString()}")
-                    isInstalling = false
-                    isExtracted = true // اجازه دسترسی به ترمینال حتی در صورت خطا
-                    startTerminal()
                 }
             }
         }
@@ -268,6 +227,7 @@ fun TerminalScreen() {
         fixAlpineStructure(alpineDir)
 
         withContext(Dispatchers.Main) {
+            isExtracted = true
             showPackageDialog = true
             checkStoragePermission()
         }
@@ -275,7 +235,6 @@ fun TerminalScreen() {
 
     LaunchedEffect(Unit) { extractLinux() }
 
-    // پنجره انتخاب پکیج‌ها
     if (showPackageDialog) {
         AlertDialog(
             onDismissRequest = { },
@@ -299,14 +258,25 @@ fun TerminalScreen() {
                 }
             },
             confirmButton = {
-                Button(onClick = { installSelectedPackages() }) {
+                Button(onClick = { 
+                    showPackageDialog = false
+                    isInstalling = true
+                    startTerminal(selectedPackages.toList()) 
+                }) {
                     Text("Install & Start")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showPackageDialog = false
+                    startTerminal(emptyList())
+                }) {
+                    Text("Skip")
                 }
             }
         )
     }
 
-    // پنجره تنظیمات
     if (showSettings) {
         AlertDialog(
             onDismissRequest = { showSettings = false },
@@ -340,18 +310,16 @@ fun TerminalScreen() {
     }
 
     fun runCommand(cmd: String) {
-        if (ptyFd <= 0 || isInstalling) return
+        if (ptyFd <= 0) return
         ptyProcess.writeData(cmd + "\n")
     }
 
     Column(modifier = Modifier.fillMaxSize().background(bgColor).padding(8.dp)) {
-        // هدر (دکمه‌های کپی و تنظیمات)
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             TextButton(onClick = { copyAllText() }) { Text("Copy All", color = Color.Cyan, fontSize = 12.sp) }
             TextButton(onClick = { showSettings = true }) { Text("⚙️ Settings", color = Color.Cyan, fontSize = 12.sp) }
         }
 
-        // نوار پیشرفت نصب
         if (isInstalling) {
             Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                 Text(installStatus, color = Color.Cyan, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
@@ -367,7 +335,6 @@ fun TerminalScreen() {
             }
         }
         
-        // نمایش خروجی ترمینال
         LazyColumn(
             state = listState, 
             modifier = Modifier.weight(1f).pointerInput(Unit) {
@@ -381,7 +348,6 @@ fun TerminalScreen() {
             }
         }
         
-        // کلیدهای کمکی (استاندارد و اسکرول‌شونده)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -389,7 +355,6 @@ fun TerminalScreen() {
                 .padding(vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            // دکمه‌های استاندارد کیبورد
             val keys = listOf(
                 "ESC" to "\u001b", "TAB" to "\t", "/" to "/", "-" to "-",
                 "UP" to "\u001b[A", "DOWN" to "\u001b[B", "LEFT" to "\u001b[D", "RIGHT" to "\u001b[C"
@@ -405,7 +370,6 @@ fun TerminalScreen() {
                 }
             }
 
-            // دکمه CTRL (خاص)
             Button(
                 onClick = { isCtrlPressed = !isCtrlPressed },
                 colors = ButtonDefaults.buttonColors(
@@ -418,21 +382,18 @@ fun TerminalScreen() {
             }
         }
 
-        // ورودی متن
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(text = "$ ", color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize)
             BasicTextField(
                 value = inputText, 
                 onValueChange = { newText -> 
                     if (isCtrlPressed) {
-                        // اگر CTRL فعال است، کاراکتر کنترل را بفرست
-                        val ctrlChar = when (newText.lastOrNull()?.uppercaseChar()) {
-                            'C' -> "\u0003"
-                            'D' -> "\u0004"
-                            'Z' -> "\u001a"
-                            else -> newText
+                        val c = newText.lastOrNull()?.uppercaseChar()
+                        if (c != null) {
+                            val ascii = c.code - 64 // A=1, C=3
+                            if (ascii in 1..26) ptyProcess.writeData(ascii.toChar().toString())
+                            else ptyProcess.writeData(newText)
                         }
-                        ptyProcess.writeData(ctrlChar)
                         isCtrlPressed = false
                         inputText = ""
                     } else {
@@ -442,7 +403,7 @@ fun TerminalScreen() {
                 textStyle = TextStyle(color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize),
                 modifier = Modifier.weight(1f).focusRequester(focusRequester),
                 singleLine = true, 
-                enabled = isExtracted && !isInstalling,
+                enabled = isExtracted,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { 
                     runCommand(inputText)

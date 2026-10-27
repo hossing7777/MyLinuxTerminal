@@ -24,12 +24,17 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
+import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); setContent { TerminalScreen() } }
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent { TerminalScreen() }
+    }
 }
 
 @Composable
@@ -37,25 +42,42 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v2.3", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v3.0", "Extracting Alpine Linux... Please wait.") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
 
     suspend fun extractLinux() = withContext(Dispatchers.IO) {
         val alpineDir = File(context.filesDir, "alpine")
-        val tarFile = File(context.filesDir, "alpine.tar.gz")
         if (!alpineDir.exists() || alpineDir.listFiles()?.isEmpty() == true) {
             try {
-                context.assets.open("alpine.tar.gz").use { input -> tarFile.outputStream().use { output -> input.copyTo(output) } }
-                if (!alpineDir.exists()) alpineDir.mkdirs()
-                // استخراج فایل با استفاده از tar سیستم
-                val process = Runtime.getRuntime().exec("tar -xzf ${tarFile.absolutePath} -C ${alpineDir.absolutePath}")
-                if (process.waitFor() == 0) tarFile.delete() else withContext(Dispatchers.Main) { outputLines.add("Warning: tar exit code ${process.exitValue()}") }
-            } catch (e: Exception) { withContext(Dispatchers.Main) { outputLines.add("Extraction Error: ${e.message}") } }
+                alpineDir.mkdirs()
+                // استفاده از کتابخانه برای استخراج به جای دستور tar سیستم
+                context.assets.open("alpine.tar.gz").use { input ->
+                    GzipCompressorInputStream(input).use { gzipIn ->
+                        TarArchiveInputStream(gzipIn).use { tarIn ->
+                            var entry = tarIn.nextEntry
+                            while (entry != null) {
+                                val file = File(alpineDir, entry.name)
+                                if (entry.isDirectory) {
+                                    file.mkdirs()
+                                } else {
+                                    file.parentFile?.mkdirs()
+                                    file.outputStream().use { output -> tarIn.copyTo(output) }
+                                }
+                                tarIn.closeEntry()
+                                entry = tarIn.nextEntry
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { outputLines.add("Extraction Error: ${e.message}") }
+            }
         }
         withContext(Dispatchers.Main) {
             isExtracted = true
             outputLines.add("Alpine Linux initialized!")
+            outputLines.add("Try: 'cat /etc/os-release' or 'apk add python3'")
             listState.animateScrollToItem(outputLines.size - 1)
         }
     }
@@ -73,16 +95,11 @@ fun TerminalScreen() {
                     val nativeLibDir = context.applicationInfo.nativeLibraryDir
                     val prootPath = File(nativeLibDir, "libproot.so").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
-                    val loaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
-                    // نام فایل در اندروید libtalloc.so است، اما آن را به libtalloc.so.2 در لینوکس متصل می‌کنیم
-                    val tallocPath = File(nativeLibDir, "libtalloc.so").absolutePath
 
+                    // چون PRoot استاتیک است، نیازی به لودر و talloc ندارد
                     val pb = ProcessBuilder(
                         prootPath, "-r", alpinePath, "-0", "-w", "/",
                         "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "/storage/emulated/0:/sdcard",
-                        "-b", "$loaderPath:/lib/ld-musl-aarch64.so.1",
-                        "-b", "$tallocPath:/lib/libtalloc.so.2", // اتصال به مسیر مورد نیاز PRoot
-                        "--link2symlink",
                         "/bin/sh", "-c", cleanCmd
                     )
                     pb.redirectErrorStream(true)

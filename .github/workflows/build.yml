@@ -8,29 +8,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Setup PRoot & Alpine
+    - name: Download Alpine only
       run: |
-        mkdir -p app/src/main/assets app/src/main/jniLibs/arm64-v8a
-        
-        # ۱. دانلود PRoot
-        curl -fL -o proot.deb "https://mirrors.aliyun.com/termux/termux-main/pool/main/p/proot/proot_5.1.107.101_aarch64.deb"
-        ar x proot.deb && tar -xf data.tar.xz --no-same-owner --no-same-permissions
-        cp data/data/com.termux/files/usr/bin/proot app/src/main/jniLibs/arm64-v8a/libproot.so
-        cp data/data/com.termux/files/usr/libexec/proot/loader app/src/main/jniLibs/arm64-v8a/libproot_loader.so
-        
-        # ۲. دانلود libtalloc (نسخه دقیق 2.5.0)
-        curl -fL -o talloc.deb "https://mirrors.aliyun.com/termux/termux-main/pool/main/libt/libtalloc/libtalloc_2.5.0_aarch64.deb"
-        ar x talloc.deb && tar -xf data.tar.xz --no-same-owner --no-same-permissions
-        # تغییر نام به libtalloc.so تا اندروید آن را در APK کپی کند
-        cp data/data/com.termux/files/usr/lib/libtalloc.so.2 app/src/main/jniLibs/arm64-v8a/libtalloc.so
-        
-        # ۳. دانلود Alpine
+        mkdir -p app/src/main/assets
         curl -fL -o app/src/main/assets/alpine.tar.gz "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-3.21.3-aarch64.tar.gz"
-        
-        echo "Verifying downloads..."
-        ls -lh app/src/main/jniLibs/arm64-v8a/
-        ls -lh app/src/main/assets/
-
     - uses: actions/setup-java@v4
       with: { java-version: '17', distribution: 'temurin', cache: gradle }
     - run: chmod +x gradlew

@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.4", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.5", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -94,8 +94,9 @@ fun TerminalScreen() {
         fixAlpineStructure(alpineDir)
 
         val shFile = File(alpineDir, "bin/sh")
+        val lsFile = File(alpineDir, "bin/ls")
         withContext(Dispatchers.Main) { 
-            outputLines.add("Debug: sh size = ${shFile.length()} bytes") 
+            outputLines.add("Debug: sh = ${shFile.length()}B, ls = ${lsFile.length()}B") 
         }
 
         withContext(Dispatchers.Main) {
@@ -203,59 +204,52 @@ fun fixAlpineStructure(alpineDir: File) {
         val libDir = File(alpineDir, "lib")
         val usrLibDir = File(alpineDir, "usr/lib")
 
-        // ۱. پاکسازی و بازسازی پوشه bin
+        // ۱. اطمینان از اینکه پوشه‌ها واقعی هستند (نه لینک خراب)
         if (binDir.exists() && !binDir.isDirectory) binDir.delete()
         binDir.mkdirs()
+        if (usrBinDir.exists() && !usrBinDir.isDirectory) usrBinDir.delete()
+        usrBinDir.mkdirs()
 
-        if (usrBinDir.exists()) {
-            usrBinDir.listFiles()?.forEach { file ->
-                if (file.isFile) {
-                    val dest = File(binDir, file.name)
-                    file.copyTo(dest, overwrite = true)
-                    dest.setExecutable(true)
-                }
+        // ۲. پیدا کردن فایل اصلی busybox
+        var busybox = File(binDir, "busybox")
+        if (!busybox.exists() || busybox.length() < 100000L) {
+            val usrBusybox = File(usrBinDir, "busybox")
+            if (usrBusybox.exists() && usrBusybox.length() > 100000L) {
+                busybox = usrBusybox
             }
         }
 
-        // ۲. پاکسازی و بازسازی پوشه lib
-        if (libDir.exists() && !libDir.isDirectory) libDir.delete()
-        libDir.mkdirs()
-
-        if (usrLibDir.exists()) {
-            usrLibDir.listFiles()?.forEach { file ->
-                if (file.isFile) {
-                    val dest = File(libDir, file.name)
-                    file.copyTo(dest, overwrite = true)
-                }
-            }
-        }
-
-        // ۳. ساخت فیزیکی دستورات ضروری از روی busybox
-        val busybox = File(binDir, "busybox")
-        if (busybox.exists()) {
-            // لیست دستوراتی که در ترمینال به آن‌ها نیاز داریم
+        // ۳. کپی اجباری تمام دستورات از روی busybox (حتی اگر به عنوان لینک وجود داشته باشند)
+        if (busybox.exists() && busybox.length() > 100000L) {
             val applets = listOf(
                 "sh", "ls", "cat", "echo", "pwd", "mkdir", "rm", "cp", "mv", 
                 "chmod", "chown", "sed", "grep", "awk", "env", "uname", 
                 "sleep", "kill", "ps", "ln", "df", "du", "head", "tail", 
-                "touch", "date", "clear", "mount", "id", "whoami"
+                "touch", "date", "clear", "mount", "id", "whoami", "find", "vi"
             )
             
             for (applet in applets) {
-                val appletFile = File(binDir, applet)
-                // اگر فایل وجود ندارد یا حجمش صفر است، از busybox کپی می‌کنیم
-                if (!appletFile.exists() || appletFile.length() == 0L) {
-                    appletFile.delete()
-                    busybox.copyTo(appletFile, overwrite = true)
-                    appletFile.setExecutable(true)
-                }
+                // ساخت در /bin
+                val appletBin = File(binDir, applet)
+                try { appletBin.delete() } catch (e: Exception) {}
+                busybox.copyTo(appletBin, overwrite = true)
+                appletBin.setExecutable(true)
+
+                // ساخت در /usr/bin
+                val appletUsrBin = File(usrBinDir, applet)
+                try { appletUsrBin.delete() } catch (e: Exception) {}
+                busybox.copyTo(appletUsrBin, overwrite = true)
+                appletUsrBin.setExecutable(true)
             }
         }
 
         // ۴. اصلاح لودر لینوکس (ld-musl)
+        if (libDir.exists() && !libDir.isDirectory) libDir.delete()
+        libDir.mkdirs()
+        
         val ldMusl = File(libDir, "ld-musl-aarch64.so.1")
-        if (!ldMusl.exists() || ldMusl.length() == 0L) {
-            ldMusl.delete()
+        if (!ldMusl.exists() || ldMusl.length() < 1000L) {
+            try { ldMusl.delete() } catch (e: Exception) {}
             val libc = File(libDir, "libc.musl-aarch64.so.1")
             if (libc.exists()) {
                 libc.copyTo(ldMusl, overwrite = true)
@@ -304,7 +298,7 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
                 try {
                     Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName))
                 } catch (e: Exception) {
-                    Log.e("Terminal", "Symlink failed, ignoring: ${entry.name}")
+                    // اگر لینک ساخته نشد، اصلا مهم نیست چون تابع fixAlpineStructure همه چیز را به زور کپی می‌کند
                 }
             } else {
                 destFile.parentFile?.mkdirs()

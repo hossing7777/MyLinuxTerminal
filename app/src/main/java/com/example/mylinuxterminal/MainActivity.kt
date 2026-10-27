@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v6.3", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v6.4", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -119,7 +119,6 @@ fun TerminalScreen() {
                     val prootPath = File(context.applicationInfo.nativeLibraryDir, "libproot.so").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
                     
-                    // ⬇️ ترفند جدید: قرار دادن پوشه موقت در داخل خود لینوکس
                     val tmpDir = File(alpinePath, "tmp")
                     if (!tmpDir.exists()) tmpDir.mkdirs()
 
@@ -139,7 +138,6 @@ fun TerminalScreen() {
                     val env = pb.environment()
                     env["PROOT_TMP_DIR"] = tmpDir.absolutePath
                     env["PROOT_NO_SECCOMP"] = "1"
-                    env["PROOT_FORCE_FOREIGN_BINARY"] = "1"
                     
                     pb.redirectErrorStream(true)
                     val process = pb.start()
@@ -222,14 +220,19 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
             if (entry.isDirectory) {
                 destFile.mkdirs()
             } else if (entry.isSymbolicLink) {
-                // ⬇️ ترفند جدید: اگر اندروید اجازه ساخت لینک نداد، فایل را کپی کن
                 if (!destFile.exists()) {
                     try {
                         Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName))
                     } catch (e: Exception) {
+                        // ⬇️ رفع باگ: مدیریت صحیح لینک‌های نسبی و مطلق
                         Log.e("Terminal", "Symlink failed: ${entry.name} -> ${entry.linkName}. Trying to copy.")
-                        val targetFile = File(destDir, entry.linkName.removePrefix("/"))
-                        if (targetFile.exists()) {
+                        val targetFile = if (entry.linkName.startsWith("/")) {
+                            File(destDir, entry.linkName.removePrefix("/"))
+                        } else {
+                            File(destFile.parentFile, entry.linkName)
+                        }
+                        
+                        if (targetFile.exists() && targetFile.isFile) {
                             targetFile.copyTo(destFile, overwrite = true)
                         }
                     }

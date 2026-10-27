@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v6.7", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v6.8", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -90,28 +90,30 @@ fun TerminalScreen() {
             }
         }
 
-        // 🛠️ ترفند نهایی: اصلاح ساختار لینوکس بعد از استخراج
+        // 🛠️ ترفند نهایی: استفاده از Files.delete برای پاک کردن خود لینک (نه فایل اصلی)
         try {
             val binDir = File(alpineDir, "bin")
-            val usrBinDir = File(alpineDir, "usr/bin")
+            val shFile = File(binDir, "sh")
             
-            // پیدا کردن busybox
-            val busybox = if (File(binDir, "busybox").exists()) File(binDir, "busybox") else File(usrBinDir, "busybox")
+            // پاک کردن لینک خراب با روش امن
+            if (Files.exists(shFile.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                try { Files.delete(shFile.toPath()) } catch (e: Exception) { shFile.delete() }
+            }
+
+            val busybox = if (File(binDir, "busybox").exists()) File(binDir, "busybox") else File(alpineDir, "usr/bin/busybox")
             if (busybox.exists()) {
-                val shFile = File(binDir, "sh")
-                if (shFile.exists()) shFile.delete() // پاک کردن لینک خراب
                 busybox.copyTo(shFile, overwrite = true)
                 shFile.setExecutable(true)
             }
 
             val libDir = File(alpineDir, "lib")
-            val usrLibDir = File(alpineDir, "usr/lib")
-            
-            // پیدا کردن libc
-            val libc = if (File(libDir, "libc.musl-aarch64.so.1").exists()) File(libDir, "libc.musl-aarch64.so.1") else File(usrLibDir, "libc.musl-aarch64.so.1")
+            val ldMusl = File(libDir, "ld-musl-aarch64.so.1")
+            if (Files.exists(ldMusl.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                try { Files.delete(ldMusl.toPath()) } catch (e: Exception) { ldMusl.delete() }
+            }
+
+            val libc = if (File(libDir, "libc.musl-aarch64.so.1").exists()) File(libDir, "libc.musl-aarch64.so.1") else File(alpineDir, "usr/lib/libc.musl-aarch64.so.1")
             if (libc.exists()) {
-                val ldMusl = File(libDir, "ld-musl-aarch64.so.1")
-                if (ldMusl.exists()) ldMusl.delete()
                 libc.copyTo(ldMusl, overwrite = true)
                 ldMusl.setExecutable(true)
             }
@@ -119,9 +121,8 @@ fun TerminalScreen() {
             val tmpDir = File(alpineDir, "tmp")
             if (!tmpDir.exists()) tmpDir.mkdirs()
 
-            // چاپ وضعیت برای عیب‌یابی
             withContext(Dispatchers.Main) { 
-                outputLines.add("Debug: sh size = ${File(binDir, "sh").length()} bytes") 
+                outputLines.add("Debug: sh size = ${shFile.length()} bytes") 
             }
             
         } catch (e: Exception) {
@@ -167,7 +168,7 @@ fun TerminalScreen() {
                     val env = pb.environment()
                     env["PROOT_TMP_DIR"] = tmpDir.absolutePath
                     env["PROOT_NO_SECCOMP"] = "1"
-                    env["PROOT_FORCE_FOREIGN_BINARY"] = "1" // دور زدن محدودیت اجرا
+                    env["PROOT_FORCE_FOREIGN_BINARY"] = "1"
                     
                     pb.redirectErrorStream(true)
                     val process = pb.start()
@@ -250,7 +251,6 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
             if (entry.isDirectory) {
                 destFile.mkdirs()
             } else if (entry.isSymbolicLink) {
-                // ⬇️ رفع باگ بزرگ: اگر ساخت لینک ممکن نبود، هیچ فایلی نساز تا پوشه‌ها سالم بمانند
                 try {
                     Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName))
                 } catch (e: Exception) {

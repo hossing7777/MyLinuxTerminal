@@ -54,7 +54,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.1", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v7.2", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     
@@ -169,8 +169,11 @@ fun TerminalScreen() {
                     val env = pb.environment()
                     env["PROOT_TMP_DIR"] = tmpDir.absolutePath
                     env["PROOT_NO_SECCOMP"] = "1"
-                    env["PROOT_LOADER"] = loaderPath // مسیر لودر PRoot رسمی
+                    env["PROOT_LOADER"] = loaderPath
                     env.remove("LD_PRELOAD")
+                    
+                    // 👇 خط جادویی: به اندروید می‌گوییم کتابخانه‌های جانبی را کجا پیدا کند
+                    env["LD_LIBRARY_PATH"] = nativeLibDir 
                     
                     pb.redirectErrorStream(true)
                     val process = pb.start()

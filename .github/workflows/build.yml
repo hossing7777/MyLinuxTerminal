@@ -18,10 +18,11 @@ jobs:
         cp data/data/com.termux/files/usr/bin/proot app/src/main/jniLibs/arm64-v8a/libproot.so
         cp data/data/com.termux/files/usr/libexec/proot/loader app/src/main/jniLibs/arm64-v8a/libproot_loader.so
         
-        # ۲. دانلود libtalloc (نسخه 2.4.2)
-        curl -fL -o talloc.deb "https://mirrors.aliyun.com/termux/termux-main/pool/main/libt/libtalloc/libtalloc_2.4.2_aarch64.deb"
+        # ۲. دانلود libtalloc (نسخه دقیق 2.5.0)
+        curl -fL -o talloc.deb "https://mirrors.aliyun.com/termux/termux-main/pool/main/libt/libtalloc/libtalloc_2.5.0_aarch64.deb"
         ar x talloc.deb && tar -xf data.tar.xz --no-same-owner --no-same-permissions
-        cp data/data/com.termux/files/usr/lib/libtalloc.so.2 app/src/main/jniLibs/arm64-v8a/libtalloc.so.2
+        # تغییر نام به libtalloc.so تا اندروید آن را در APK کپی کند
+        cp data/data/com.termux/files/usr/lib/libtalloc.so.2 app/src/main/jniLibs/arm64-v8a/libtalloc.so
         
         # ۳. دانلود Alpine
         curl -fL -o app/src/main/assets/alpine.tar.gz "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-3.21.3-aarch64.tar.gz"

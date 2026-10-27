@@ -37,7 +37,7 @@ fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v2.2", "Initializing...") }
+    val outputLines = remember { mutableStateListOf("Welcome to MyLinux Terminal v2.3", "Initializing...") }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
 
@@ -48,7 +48,7 @@ fun TerminalScreen() {
             try {
                 context.assets.open("alpine.tar.gz").use { input -> tarFile.outputStream().use { output -> input.copyTo(output) } }
                 if (!alpineDir.exists()) alpineDir.mkdirs()
-                // استفاده از tar سیستم برای استخراج (ممکن است در برخی دستگاه‌ها نیاز به BusyBox باشد)
+                // استخراج فایل با استفاده از tar سیستم
                 val process = Runtime.getRuntime().exec("tar -xzf ${tarFile.absolutePath} -C ${alpineDir.absolutePath}")
                 if (process.waitFor() == 0) tarFile.delete() else withContext(Dispatchers.Main) { outputLines.add("Warning: tar exit code ${process.exitValue()}") }
             } catch (e: Exception) { withContext(Dispatchers.Main) { outputLines.add("Extraction Error: ${e.message}") } }
@@ -74,13 +74,14 @@ fun TerminalScreen() {
                     val prootPath = File(nativeLibDir, "libproot.so").absolutePath
                     val alpinePath = File(context.filesDir, "alpine").absolutePath
                     val loaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
-                    val tallocPath = File(nativeLibDir, "libtalloc.so.2").absolutePath
+                    // نام فایل در اندروید libtalloc.so است، اما آن را به libtalloc.so.2 در لینوکس متصل می‌کنیم
+                    val tallocPath = File(nativeLibDir, "libtalloc.so").absolutePath
 
                     val pb = ProcessBuilder(
                         prootPath, "-r", alpinePath, "-0", "-w", "/",
                         "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "/storage/emulated/0:/sdcard",
                         "-b", "$loaderPath:/lib/ld-musl-aarch64.so.1",
-                        "-b", "$tallocPath:/lib/libtalloc.so.2", // اتصال کتابخانه به لینوکس
+                        "-b", "$tallocPath:/lib/libtalloc.so.2", // اتصال به مسیر مورد نیاز PRoot
                         "--link2symlink",
                         "/bin/sh", "-c", cleanCmd
                     )

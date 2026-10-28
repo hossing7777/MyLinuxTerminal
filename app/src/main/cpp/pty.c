@@ -5,6 +5,7 @@
 #include <sys/ioctl.h>
 #include <android/log.h>
 #include <string.h>
+#include <errno.h>
 
 int master_fd = -1;
 
@@ -33,8 +34,11 @@ Java_com_example_mylinuxterminal_PtyProcess_createPty(JNIEnv *env, jobject thiz,
         dup2(slave_fd, 2);
         if (slave_fd > 2) close(slave_fd);
 
-        // اجرای امن از طریق شل سیستم اندروید
+        // اجرای شل سیستم
         execl("/system/bin/sh", "sh", "-c", cmd_str, NULL);
+        
+        // اگر به اینجا رسید یعنی execl شکست خورده است
+        dprintf(2, "C++ EXECL FAILED: %s\n", strerror(errno));
         _exit(1);
     }
     (*env)->ReleaseStringUTFChars(env, cmd, cmd_str);

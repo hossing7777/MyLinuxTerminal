@@ -119,10 +119,10 @@ fun TerminalScreen() {
             val loaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
             val alpinePath = File(context.filesDir, "alpine").absolutePath
             val tmpDir = File(alpinePath, "tmp").absolutePath
+            val filesDir = context.filesDir.absolutePath
             
             val scriptFile = File(context.filesDir, "start.sh")
             
-            // ساخت دستور نصب و اجرای شل
             val installCmd = if (packagesToInstall.isNotEmpty()) {
                 "apk update && apk add ${packagesToInstall.joinToString(" ")} && echo '::DONE::' ; exec /bin/sh"
             } else {
@@ -131,7 +131,12 @@ fun TerminalScreen() {
             
             val finalCmd = installCmd.replace("\"", "\\\"")
 
+            // اضافه کردن echo برای دیباگ
             scriptFile.writeText("""
+                echo "Script started."
+                cd $filesDir
+                echo "Checking PRoot executable..."
+                ls -l $prootPath
                 export PROOT_TMP_DIR=$tmpDir
                 export PROOT_NO_SECCOMP=1
                 export PROOT_LOADER=$loaderPath
@@ -139,6 +144,7 @@ fun TerminalScreen() {
                 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
                 export HOME=/root
                 export TERM=xterm-256color
+                echo "Executing PRoot..."
                 exec $prootPath --kill-on-exit --link2symlink --sysvipc -0 -r $alpinePath -w / -b /dev -b /proc -b /sys -b /storage/emulated/0:/sdcard /bin/sh -c "$finalCmd"
             """.trimIndent())
             scriptFile.setExecutable(true)
@@ -196,9 +202,8 @@ fun TerminalScreen() {
                             }
                         }
                     } else {
-                        // 👇 خروج از حلقه در صورت اتمام یا خطا
                         withContext(Dispatchers.Main) { 
-                            outputLines.add("Terminal process ended (Code: $len)") 
+                            outputLines.add("Terminal process ended (Read returned: $len). Check logs above.") 
                         }
                         break 
                     }

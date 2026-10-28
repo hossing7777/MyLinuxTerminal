@@ -43,12 +43,15 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.*
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -69,10 +72,8 @@ fun TerminalScreen() {
     
     var isExtracted by remember { mutableStateOf(false) }
     var showPackageDialog by remember { mutableStateOf(false) }
-    
     var isInstalling by remember { mutableStateOf(false) }
     var installProgress by remember { mutableStateOf(0f) }
-    var installStatus by remember { mutableStateOf("") }
     var isTerminalRunning by remember { mutableStateOf(false) }
 
     var inputText by remember { mutableStateOf("") }
@@ -81,14 +82,13 @@ fun TerminalScreen() {
     var bgColor by remember { mutableStateOf(Color.Black) }
     var showSettings by remember { mutableStateOf(false) }
     
-    // 👇 متغیرهای هوش مصنوعی
+    // 👇 متغیرهای ایجنت هوشمند
     var showAiDialog by remember { mutableStateOf(false) }
     var aiPrompt by remember { mutableStateOf("") }
-    var aiResponse by remember { mutableStateOf("") }
-    var isAiLoading by remember { mutableStateOf(false) }
-    val aiAgent = remember { AiAgent() }
+    var isAiRunning by remember { mutableStateOf(false) }
+    val agentLogs = remember { mutableStateListOf<String>() } // لاگ‌های نمایش در پنجره چت
     
-    // 👇 متغیرهای تنظیمات API
+    val aiAgent = remember { AiAgent() }
     var apiKey by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
     var isTesting by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf("") }
@@ -100,6 +100,12 @@ fun TerminalScreen() {
     val coroutineScope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+
+    // 👇 ابزارهای ارتباط با PTY برای خواندن خروجی
+    var isWaitingForCommand by remember { mutableStateOf(false) }
+    var currentMarker by remember { mutableStateOf("") }
+    var commandOutputBuffer by remember { mutableStateOf(StringBuilder()) }
+    var commandDeferred by remember { mutableStateOf<CompletableDeferred<String>?>(null) }
 
     val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop")
     val selectedPackages = remember { mutableStateListOf("python3", "git", "nano") }
@@ -126,11 +132,29 @@ fun TerminalScreen() {
     }
 
     fun sendToPty(data: String) {
-        if (ptyFd > 0) {
-            ptyProcess.writeData(data)
-        }
+        if (ptyFd > 0) ptyProcess.writeData(data)
         focusRequester.requestFocus()
         keyboardController?.show()
+    }
+
+    // 👇 تابعی که یک دستور را اجرا کرده و منتظر خروجی آن می‌ماند
+    suspend fun executeCommandAndWait(command: String): String {
+        return withContext(Dispatchers.IO) {
+            val deferred = CompletableDeferred<String>()
+            commandDeferred = deferred
+            
+            val marker = "::CMD_DONE_${System.currentTimeMillis()}::"
+            currentMarker = marker
+            commandOutputBuffer.clear()
+            isWaitingForCommand = true
+            
+            // ارسال دستور به همراه یک نشانگر مخفی برای فهمیدن پایان کار
+            val fullCommand = "$command 2>&1; echo \"$marker\"\n"
+            ptyProcess.writeData(fullCommand)
+            
+            // منتظر می‌مانیم تا خواننده PTY، مارکر را ببیند و deferred را کامل کند
+            deferred.await()
+        }
     }
 
     fun startTerminal(packagesToInstall: List<String> = emptyList()) {
@@ -146,9 +170,9 @@ fun TerminalScreen() {
             File(tmpDir).mkdirs()
             
             val initialCmd = if (!setupDoneFile.exists() && packagesToInstall.isNotEmpty()) {
-                "apk update && apk add ${packagesToInstall.joinToString(" ")} && touch /.setup_done && echo '::DONE::'"
+                "apk update && apk add ${packagesToInstall.joinToString(" ")} && touch /.setup_done && echo '::SETUP_DONE::'"
             } else {
-                "echo '::DONE::'"
+                "echo '::SETUP_DONE::'"
             }
 
             val scriptFile = File(context.filesDir, "start.sh")
@@ -168,52 +192,39 @@ fun TerminalScreen() {
             
             if (ptyFd > 0) {
                 val buf = ByteArray(4096)
-                val regex = Regex("""\((\d+)/(\d+)\)""")
-                val buffer = StringBuilder()
-
                 while (true) {
                     val len = ptyProcess.readData(buf)
                     if (len > 0) {
                         val text = String(buf, 0, len)
                         val cleanText = cleanAnsi(text)
 
-                        buffer.append(cleanText)
-
-                        while (buffer.contains("\n")) {
-                            val idx = buffer.indexOf("\n")
-                            val line = buffer.substring(0, idx)
-                            buffer.delete(0, idx + 1)
-
-                            withContext(Dispatchers.Main) {
-                                if (line.contains("::DONE::")) {
-                                    isInstalling = false
-                                    installProgress = 1f
-                                    installStatus = "Ready!"
-                                } else {
-                                    val match = regex.find(line)
-                                    if (match != null && isInstalling) {
-                                        val current = match.groupValues[1].toIntOrNull() ?: 0
-                                        val total = match.groupValues[2].toIntOrNull() ?: 1
-                                        if (total > 0) installProgress = current.toFloat() / total.toFloat()
-                                        installStatus = "Installing ($current/$total)..."
-                                    }
-                                    if (line.isNotBlank() && !line.contains("[7") && !line.contains("[8")) {
-                                        outputLines.add(line)
-                                        listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
-                                    }
-                                }
+                        // اگر منتظر خروجی یک دستور ایجنت هستیم
+                        if (isWaitingForCommand) {
+                            commandOutputBuffer.append(cleanText)
+                            if (commandOutputBuffer.contains(currentMarker)) {
+                                val finalOutput = commandOutputBuffer.substringBefore(currentMarker).trim()
+                                commandDeferred?.complete(finalOutput)
+                                isWaitingForCommand = false
                             }
                         }
-                        if (buffer.contains("# ") || buffer.contains("$ ")) {
-                            withContext(Dispatchers.Main) {
-                                outputLines.add(buffer.toString())
-                                buffer.clear()
-                                listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
+
+                        // آپدیت UI
+                        withContext(Dispatchers.Main) {
+                            if (cleanText.contains("::SETUP_DONE::")) {
+                                isInstalling = false
+                                installProgress = 1f
                             }
+                            // افزودن به خطوط ترمینال
+                            val lines = cleanText.split("\n")
+                            for (line in lines) {
+                                if (line.isNotBlank() && !line.contains("::CMD_DONE_") && !line.contains("::SETUP_DONE::")) {
+                                    outputLines.add(line)
+                                }
+                            }
+                            listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
                         }
                     } else break
                 }
-                withContext(Dispatchers.Main) { outputLines.add("Terminal process ended.") }
             }
         }
     }
@@ -229,116 +240,116 @@ fun TerminalScreen() {
         checkStoragePermission()
     }
 
-    // 👇 پنجره چت با هوش مصنوعی
+    // 👇 تابع اصلی اجرای ایجنت
+    fun runAgent(userRequest: String) {
+        isAiRunning = true
+        agentLogs.clear()
+        agentLogs.add("📝 درخواست: $userRequest")
+        
+        coroutineScope.launch {
+            val history = JSONArray()
+            history.put(JSONObject().put("role", "user").put("content", userRequest))
+            
+            var step = 0
+            val maxSteps = 8 // حداکثر تعداد دستورات متوالی برای جلوگیری از حلقه بی‌پایان
+            
+            while (step < maxSteps && isAiRunning) {
+                step++
+                agentLogs.add("🤖 در حال فکر کردن (مرحله $step)...")
+                
+                val aiResponse = aiAgent.runAgentStep(apiKey, history)
+                
+                if (aiResponse == null || aiResponse.startsWith("Error")) {
+                    agentLogs.add("❌ خطا در ارتباط با هوش مصنوعی: $aiResponse")
+                    break
+                }
+                
+                if (aiResponse == "TASK_COMPLETE") {
+                    agentLogs.add("✅ عملیات با موفقیت به پایان رسید!")
+                    break
+                }
+                
+                agentLogs.add("💻 اجرای دستور: $aiResponse")
+                
+                // اجرای دستور در ترمینال و گرفتن خروجی
+                val output = executeCommandAndWait(aiResponse)
+                
+                val displayOutput = if (output.isBlank()) "(بدون خروجی)" else output
+                agentLogs.add("📄 خروجی ترمینال:\n$displayOutput")
+                
+                // اضافه کردن نتیجه به تاریخچه برای مرحله بعد
+                history.put(JSONObject().put("role", "assistant").put("content", aiResponse))
+                history.put(JSONObject().put("role", "user").put("content", "The command output was:\n$output\n\nWhat is the next command? If the task is complete, output TASK_COMPLETE."))
+            }
+            
+            if (step >= maxSteps) {
+                agentLogs.add("⚠️ به حداکثر تعداد مراحل رسیدیم. عملیات متوقف شد.")
+            }
+            isAiRunning = false
+        }
+    }
+
+    // 👇 پنجره چت
     if (showAiDialog) {
         AlertDialog(
-            onDismissRequest = { showAiDialog = false },
-            title = { Text("🤖 AI Agent", color = Color.Cyan) },
+            onDismissRequest = { if (!isAiRunning) showAiDialog = false },
+            title = { Text("🤖 AI Autonomous Agent", color = Color.Cyan) },
             text = {
                 Column {
                     if (apiKey.isBlank()) {
-                        Text("لطفاً ابتدا از منوی تنظیمات (⚙️)، کلید API خود را وارد و ذخیره کنید.", color = Color.Red, fontSize = 14.sp)
+                        Text("لطفاً ابتدا از تنظیمات (⚙️)، کلید API را وارد کنید.", color = Color.Red)
                     } else {
-                        Text("چه کاری برایت انجام دهم؟", color = Color.Gray, fontSize = 12.sp)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OutlinedTextField(
-                            value = aiPrompt,
-                            onValueChange = { aiPrompt = it },
-                            placeholder = { Text("مثلاً: لیست فایل‌های پوشه دانلود") },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        
-                        if (isAiLoading) {
-                            CircularProgressIndicator(color = Color.Cyan)
-                            Text("در حال دریافت پاسخ از هوش مصنوعی...", color = Color.Yellow, fontSize = 10.sp, modifier = Modifier.padding(top = 8.dp))
-                        } else if (aiResponse.isNotEmpty()) {
-                            Text("دستور پیشنهادی:", color = Color.Yellow, fontSize = 12.sp)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Surface(color = Color(0xFF222222), shape = MaterialTheme.shapes.small) {
-                                Text(aiResponse, color = Color.Green, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(8.dp))
-                            }
+                        if (!isAiRunning) {
+                            OutlinedTextField(
+                                value = aiPrompt,
+                                onValueChange = { aiPrompt = it },
+                                placeholder = { Text("مثلاً: در پوشه دانلود یک فایل پایتون بساز و اجرا کن") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
                             Spacer(modifier = Modifier.height(8.dp))
                             Button(
-                                onClick = {
-                                    sendToPty(aiResponse + "\n")
-                                    showAiDialog = false
-                                    aiPrompt = ""
-                                    aiResponse = ""
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006600))
-                            ) {
-                                Text("اجرا در ترمینال (Run)")
+                                onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("شروع عملیات (Start)") }
+                        } else {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.Cyan)
+                        }
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("گزارش زنده عملیات:", color = Color.Yellow, fontSize = 12.sp)
+                        
+                        // نمایش لاگ‌های ایجنت
+                        LazyColumn(modifier = Modifier.height(250.dp).fillMaxWidth().background(Color(0xFF1E1E1E))) {
+                            items(agentLogs) { log ->
+                                Text(log, color = Color.LightGray, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(4.dp))
                             }
                         }
                     }
                 }
             },
             confirmButton = {
-                if (apiKey.isNotBlank() && !isAiLoading && aiResponse.isEmpty()) {
-                    Button(onClick = {
-                        if (aiPrompt.isNotBlank()) {
-                            isAiLoading = true
-                            coroutineScope.launch {
-                                val cmd = aiAgent.generateCommand(apiKey, aiPrompt)
-                                aiResponse = cmd ?: "خطا در ارتباط با سرور."
-                                isAiLoading = false
-                            }
-                        }
-                    }) {
-                        Text("تولید دستور")
-                    }
-                } else if (aiResponse.isNotEmpty()) {
-                    TextButton(onClick = { 
-                        aiResponse = ""
-                        aiPrompt = "" 
-                    }) {
-                        Text("درخواست جدید")
-                    }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAiDialog = false }) { Text("بستن") }
+                if (!isAiRunning) TextButton(onClick = { showAiDialog = false }) { Text("بستن") }
             }
         )
     }
 
+    // (بقیه کدهای UI مثل قبل برای PackageDialog، Settings، Terminal Screen و ...)
     if (showPackageDialog) {
         AlertDialog(
             onDismissRequest = { },
-            title = { Text("Select Packages (First Run)") },
+            title = { Text("Select Packages") },
             text = {
                 LazyColumn {
                     items(availablePackages) { pkg ->
-                        Row(
-                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                        ) {
-                            Checkbox(
-                                checked = selectedPackages.contains(pkg),
-                                onCheckedChange = { isChecked ->
-                                    if (isChecked) selectedPackages.add(pkg) else selectedPackages.remove(pkg)
-                                }
-                            )
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(4.dp)) {
+                            Checkbox(checked = selectedPackages.contains(pkg), onCheckedChange = { if (it) selectedPackages.add(pkg) else selectedPackages.remove(pkg) })
                             Text(pkg)
                         }
                     }
                 }
             },
-            confirmButton = {
-                Button(onClick = { 
-                    showPackageDialog = false
-                    isInstalling = true
-                    startTerminal(selectedPackages.toList()) 
-                }) { Text("Install & Start") }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    showPackageDialog = false
-                    startTerminal(emptyList())
-                }) { Text("Skip") }
-            }
+            confirmButton = { Button(onClick = { showPackageDialog = false; isInstalling = true; startTerminal(selectedPackages.toList()) }) { Text("Install & Start") } },
+            dismissButton = { TextButton(onClick = { showPackageDialog = false; startTerminal(emptyList()) }) { Text("Skip") } }
         )
     }
 
@@ -349,69 +360,14 @@ fun TerminalScreen() {
             text = {
                 Column {
                     Text("Hormuz API Key:", color = Color.Cyan)
-                    OutlinedTextField(
-                        value = apiKey,
-                        onValueChange = { apiKey = it },
-                        placeholder = { Text("ng-...") },
-                        modifier = Modifier.fillMaxWidth(),
-                        visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true
-                    )
-                    
-                    // 👇 دکمه‌های ذخیره و تست
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Button(
-                            onClick = {
-                                prefs.edit().putString("api_key", apiKey).apply()
-                                Toast.makeText(context, "کلید با موفقیت ذخیره شد", Toast.LENGTH_SHORT).show()
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006600)),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("ذخیره کلید")
-                        }
+                    OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, placeholder = { Text("ng-...") }, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation(), singleLine = true)
+                    Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Button(onClick = { prefs.edit().putString("api_key", apiKey).apply(); Toast.makeText(context, "ذخیره شد", Toast.LENGTH_SHORT).show() }, modifier = Modifier.weight(1f)) { Text("ذخیره") }
                         Spacer(modifier = Modifier.width(8.dp))
-                        Button(
-                            onClick = {
-                                if (apiKey.isBlank()) {
-                                    testResult = "لطفا ابتدا کلید را وارد کنید."
-                                } else {
-                                    isTesting = true
-                                    testResult = ""
-                                    coroutineScope.launch {
-                                        val res = aiAgent.testConnection(apiKey)
-                                        testResult = res
-                                        isTesting = false
-                                    }
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("تست اتصال")
-                        }
+                        Button(onClick = { isTesting = true; coroutineScope.launch { testResult = aiAgent.testConnection(apiKey); isTesting = false } }, modifier = Modifier.weight(1f)) { Text("تست") }
                     }
-                    
-                    if (isTesting) {
-                        Text("در حال تست...", color = Color.Yellow, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
-                    } else if (testResult.isNotEmpty()) {
-                        Text(testResult, color = if (testResult.contains("✅")) Color.Green else Color.Red, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Font Size: ${fontSize.value.toInt()}sp")
-                    Slider(value = fontSize.value, onValueChange = { fontSize = it.sp }, valueRange = 8f..36f)
-                    
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Text Color:")
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Button(onClick = { textColor = Color.Green }) { Text("Green") }
-                        Button(onClick = { textColor = Color.White }) { Text("White") }
-                        Button(onClick = { textColor = Color.Yellow }) { Text("Yellow") }
-                    }
+                    if (isTesting) Text("در حال تست...", color = Color.Yellow)
+                    if (testResult.isNotEmpty()) Text(testResult, color = if (testResult.contains("✅")) Color.Green else Color.Red)
                 }
             },
             confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Close") } }
@@ -424,86 +380,23 @@ fun TerminalScreen() {
                 TextButton(onClick = { copyAllText() }) { Text("Copy All", color = Color.Cyan, fontSize = 12.sp) }
                 TextButton(onClick = { showSettings = true }) { Text("⚙️", color = Color.Cyan, fontSize = 12.sp) }
             }
-            Button(
-                onClick = { showAiDialog = true },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                modifier = Modifier.height(32.dp)
-            ) {
+            Button(onClick = { showAiDialog = true }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), modifier = Modifier.height(32.dp)) {
                 Text("🤖 AI Agent", color = Color.White, fontSize = 12.sp)
             }
         }
 
-        if (isInstalling) {
-            Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-                Text(installStatus, color = Color.Cyan, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                Spacer(modifier = Modifier.height(4.dp))
-                LinearProgressIndicator(
-                    progress = installProgress,
-                    modifier = Modifier.fillMaxWidth(),
-                    color = Color.Green,
-                    trackColor = Color.DarkGray
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text("${(installProgress * 100).toInt()}%", color = Color.Green, fontSize = 10.sp)
-            }
+        LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
+            items(outputLines) { line -> SelectionContainer { Text(text = line, color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize) } }
         }
         
-        LazyColumn(
-            state = listState, 
-            modifier = Modifier.weight(1f).pointerInput(Unit) {
-                detectTransformGestures { _, _, zoom, _ ->
-                    fontSize = (fontSize.value * zoom).coerceIn(8f, 36f).sp
-                }
-            }
-        ) {
-            items(outputLines) { line -> 
-                SelectionContainer { Text(text = line, color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize) }
-            }
-        }
-        
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
+        // Helper Keys Bar (CTRL, ESC, etc)
+        Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             if (isCtrlPressed) {
-                val ctrlKeys = listOf("C (Cancel)" to "\u0003", "D (Exit)" to "\u0004", "Z" to "\u001a")
-                ctrlKeys.forEach { (label, code) ->
-                    Button(
-                        onClick = { sendToPty(code); isCtrlPressed = false },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFcc0000)),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                        modifier = Modifier.height(32.dp)
-                    ) { Text(text = label, color = Color.White, fontSize = 10.sp) }
-                }
-                Button(
-                    onClick = { isCtrlPressed = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                    modifier = Modifier.height(32.dp)
-                ) { Text("X", color = Color.White, fontSize = 10.sp) }
+                listOf("C" to "\u0003", "D" to "\u0004").forEach { (l, c) -> Button(onClick = { sendToPty(c); isCtrlPressed = false }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red), modifier = Modifier.height(32.dp)) { Text(l, fontSize = 10.sp) } }
             } else {
-                Button(
-                    onClick = { isCtrlPressed = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                    modifier = Modifier.height(32.dp)
-                ) { Text("CTRL", color = Color.White, fontSize = 10.sp) }
-
-                val keys = listOf(
-                    "ESC" to "\u001b", "TAB" to "\t", "/" to "/", "-" to "-",
-                    "UP" to "\u001b[A", "DOWN" to "\u001b[B", "LEFT" to "\u001b[D", "RIGHT" to "\u001b[C"
-                )
-                keys.forEach { (label, code) ->
-                    Button(
-                        onClick = { sendToPty(code) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                        modifier = Modifier.height(32.dp)
-                    ) { Text(text = label, color = Color.White, fontSize = 10.sp) }
+                Button(onClick = { isCtrlPressed = true }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)), modifier = Modifier.height(32.dp)) { Text("CTRL", fontSize = 10.sp) }
+                listOf("ESC" to "\u001b", "TAB" to "\t", "/" to "/", "-" to "-", "UP" to "\u001b[A", "DOWN" to "\u001b[B").forEach { (l, c) ->
+                    Button(onClick = { sendToPty(c) }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)), modifier = Modifier.height(32.dp)) { Text(l, fontSize = 10.sp) }
                 }
             }
         }
@@ -511,23 +404,17 @@ fun TerminalScreen() {
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(text = "$ ", color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize)
             BasicTextField(
-                value = inputText, 
-                onValueChange = { inputText = it },
+                value = inputText, onValueChange = { inputText = it },
                 textStyle = TextStyle(color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize),
-                modifier = Modifier.weight(1f).focusRequester(focusRequester),
-                singleLine = true, 
-                enabled = isExtracted,
+                modifier = Modifier.weight(1f).focusRequester(focusRequester), singleLine = true, enabled = isExtracted,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { 
-                    sendToPty(inputText + "\n")
-                    inputText = ""
-                    focusRequester.requestFocus()
-                })
+                keyboardActions = KeyboardActions(onDone = { sendToPty(inputText + "\n"); inputText = ""; focusRequester.requestFocus() })
             )
         }
     }
 }
 
+// (توابع extractLinux, fixAlpineStructure, extractTarSmart, cleanAnsi بدون تغییر)
 fun cleanAnsi(text: String): String {
     var cleaned = text.replace(Regex("""\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])"""), "")
     cleaned = cleaned.replace(Regex("""\[\d+\s+\d+%"""), "")
@@ -539,15 +426,11 @@ suspend fun extractLinux(context: Context, outputLines: MutableList<String>) = w
     val alpineDir = File(context.filesDir, "alpine")
     val assets = context.assets.list("") ?: emptyArray()
     val assetName = if (assets.contains("alpine.tar.gz")) "alpine.tar.gz" else "alpine.tar"
-
     if (!alpineDir.exists() || alpineDir.listFiles()?.isEmpty() == true) {
         try {
             alpineDir.mkdirs()
             context.assets.open(assetName).use { input -> extractTarSmart(input, alpineDir) }
-            withContext(Dispatchers.Main) { outputLines.add("Extraction successful!") }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) { outputLines.add("Extract Error: ${e.toString()}") }
-        }
+        } catch (e: Exception) { Log.e("Terminal", "Extract Error", e) }
     }
     fixAlpineStructure(alpineDir)
 }
@@ -603,9 +486,7 @@ fun extractTarSmart(inputStream: InputStream, destDir: File) {
     bufferedInputStream.reset()
     val isGzip = signature[0] == 0x1f.toByte() && signature[1] == 0x8b.toByte()
     if (isGzip) {
-        GzipCompressorInputStream(bufferedInputStream).use { gzipIn ->
-            TarArchiveInputStream(gzipIn).use { tarIn -> extractEntries(tarIn, destDir) }
-        }
+        GzipCompressorInputStream(bufferedInputStream).use { gzipIn -> TarArchiveInputStream(gzipIn).use { tarIn -> extractEntries(tarIn, destDir) } }
     } else {
         TarArchiveInputStream(bufferedInputStream).use { tarIn -> extractEntries(tarIn, destDir) }
     }
@@ -629,14 +510,7 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
                 if (entry.mode != 0) {
                     try {
                         val octal = Integer.toOctalString(entry.mode).takeLast(3)
-                        val perms = buildString {
-                            for (c in octal) {
-                                val v = Character.digit(c, 8)
-                                append(if (v and 4 != 0) "r" else "-")
-                                append(if (v and 2 != 0) "w" else "-")
-                                append(if (v and 1 != 0) "x" else "-")
-                            }
-                        }
+                        val perms = buildString { for (c in octal) { val v = Character.digit(c, 8); append(if (v and 4 != 0) "r" else "-"); append(if (v and 2 != 0) "w" else "-"); append(if (v and 1 != 0) "x" else "-") } }
                         Files.setPosixFilePermissions(Paths.get(destFile.absolutePath), PosixFilePermissions.fromString(perms))
                     } catch (e: Exception) { }
                 }

@@ -29,9 +29,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Face // آیکون استاندارد
+import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Share // آیکون استاندارد
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -96,8 +96,6 @@ fun TerminalScreen() {
     var aiPrompt by remember { mutableStateOf("") }
     var isAiRunning by remember { mutableStateOf(false) }
     var agentJob by remember { mutableStateOf<Job?>(null) }
-    
-    // 👇 متغیر درصد پیشرفت
     var aiProgress by remember { mutableStateOf(0) }
     
     val agentLogs = remember { 
@@ -174,7 +172,6 @@ fun TerminalScreen() {
         keyboardController?.show()
     }
 
-    // 👇 تایم‌اوت به ۲ دقیقه (۱۲۰,۰۰۰ میلی‌ثانیه) افزایش یافت
     suspend fun executeCommandAndWait(command: String): String {
         return withContext(Dispatchers.IO) {
             val deferred = CompletableDeferred<String>()
@@ -186,7 +183,7 @@ fun TerminalScreen() {
             ptyProcess.writeData("stty -echo; $command 2>&1; echo \"${terminalState.currentMarker}\"; stty echo\n")
             
             try {
-                withTimeout(120000) {
+                withTimeout(120000) { // ۲ دقیقه
                     deferred.await()
                 }
             } catch (e: TimeoutCancellationException) {
@@ -290,7 +287,7 @@ fun TerminalScreen() {
             history.put(JSONObject().put("role", "user").put("content", userRequest))
             
             var step = 0
-            val maxStepsPerBatch = 30
+            val maxStepsPerBatch = 30 // سقف مراحل به ۳۰ افزایش یافت
             
             while (isAiRunning) {
                 step++
@@ -306,8 +303,8 @@ fun TerminalScreen() {
                 
                 val aiResponse = aiAgent.runAgentStep(apiKey, history, longTermMemory)
                 
-                if (aiResponse == null || aiResponse.startsWith("Error")) {
-                    agentLogs.add("❌ خطا در ارتباط: $aiResponse")
+                if (aiResponse == null || aiResponse.startsWith("HTTP_ERROR") || aiResponse == "NETWORK_ERROR") {
+                    agentLogs.add("❌ خطای شبکه یا ارتباط با سرور. لطفاً اینترنت را بررسی کنید.")
                     saveHistory()
                     break
                 }
@@ -319,23 +316,31 @@ fun TerminalScreen() {
                     break
                 }
 
-                if (aiResponse.startsWith("{") && aiResponse.contains("plan")) {
-                    agentLogs.add("🗺️ نقشه راه تولید شد:\n$aiResponse")
-                    history.put(JSONObject().put("role", "assistant").put("content", aiResponse))
-                    history.put(JSONObject().put("role", "user").put("content", "Plan received. Start executing step 1."))
-                    saveHistory()
-                    continue
-                }
-
-                // 👇 استخراج درصد پیشرفت از پاسخ هوش مصنوعی
+                var cleanCommand = aiResponse
+                
+                // استخراج درصد پیشرفت
                 val progressRegex = Regex("""\[PROGRESS:\s*(\d+)%\]""")
-                val match = progressRegex.find(aiResponse)
+                val match = progressRegex.find(cleanCommand)
                 if (match != null) {
                     aiProgress = match.groupValues[1].toIntOrNull() ?: aiProgress
+                    cleanCommand = cleanCommand.replace(progressRegex, "").trim()
                 }
-                
-                // حذف تگ پیشرفت از دستور برای اجرا در ترمینال
-                val cleanCommand = aiResponse.replace(progressRegex, "").trim()
+
+                // 👇 پاکسازی هوشمند JSON (اگر مدل دستور را در JSON فرستاد)
+                if (cleanCommand.startsWith("{") && cleanCommand.contains("command")) {
+                    try {
+                        val jsonResponse = JSONObject(cleanCommand)
+                        if (jsonResponse.has("command")) {
+                            cleanCommand = jsonResponse.getString("command")
+                        }
+                    } catch (e: Exception) {}
+                }
+
+                if (cleanCommand.isEmpty()) {
+                    history.put(JSONObject().put("role", "assistant").put("content", aiResponse))
+                    history.put(JSONObject().put("role", "user").put("content", "Output was empty. Please output a valid bash command."))
+                    continue
+                }
 
                 agentLogs.add("💻 اجرای دستور: $cleanCommand")
                 saveHistory()
@@ -396,7 +401,6 @@ fun TerminalScreen() {
                                 Button(onClick = { stopAgent() }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) { Text("STOP") }
                             }
                             Spacer(modifier = Modifier.height(8.dp))
-                            // 👇 نوار پیشرفت (Progress Bar)
                             LinearProgressIndicator(
                                 progress = aiProgress / 100f,
                                 modifier = Modifier.fillMaxWidth(),

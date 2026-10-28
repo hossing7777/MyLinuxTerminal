@@ -290,7 +290,7 @@ fun TerminalScreen() {
             history.put(JSONObject().put("role", "user").put("content", userRequest))
             
             var step = 0
-            val maxStepsPerBatch = 8
+            val maxStepsPerBatch = 30
             
             while (isAiRunning) {
                 step++

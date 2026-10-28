@@ -8,7 +8,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
-import android.util.Base64
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -29,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -38,6 +38,7 @@ import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
+import org.json.JSONObject
 import java.io.*
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -59,15 +60,13 @@ fun TerminalScreen() {
     var showPackageDialog by remember { mutableStateOf(false) }
     var isInstalling by remember { mutableStateOf(false) }
     var installProgress by remember { mutableStateOf(0f) }
-    
-    // 👇 متغیر برای حالت CTRL
     var isCtrlPressed by remember { mutableStateOf(false) }
     
     val ptyProcess = remember { PtyProcess() }
     var ptyFd by remember { mutableStateOf(-1) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
-    val outputLines = remember { mutableStateListOf<String>() }
     val coroutineScope = rememberCoroutineScope()
+    val keyboardController = LocalSoftwareKeyboardController.current
     
     val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop")
     val selectedPackages = remember { mutableStateListOf("python3", "git", "nano") }
@@ -85,10 +84,12 @@ fun TerminalScreen() {
         }
     }
 
-    // ارسال امن داده‌ها با Base64
     fun sendTerminalInput(data: String) {
         ptyProcess.writeData(data)
-        webViewRef?.evaluateJavascript("term.focus();", null)
+        // 👇 برگرداندن فوکوس به WebView و باز نگه داشتن کیبورد
+        webViewRef?.evaluateJavascript("window.focusTerminal();", null)
+        webViewRef?.requestFocus()
+        keyboardController?.show()
     }
 
     fun startTerminal(packagesToInstall: List<String> = emptyList()) {
@@ -128,10 +129,10 @@ fun TerminalScreen() {
                     if (len > 0) {
                         val text = String(buf, 0, len)
                         
-                        // 👇 ارسال با Base64 به جاوااسکریپت
+                        // 👇 ارسال امن با JSONObject
                         withContext(Dispatchers.Main) {
-                            val base64Data = Base64.encodeToString(text.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-                            webViewRef?.evaluateJavascript("window.writeToTerminal('$base64Data');", null)
+                            val quotedText = JSONObject.quote(text)
+                            webViewRef?.evaluateJavascript("window.writeToTerminal($quotedText);", null)
                         }
 
                         buffer.append(text)
@@ -157,13 +158,8 @@ fun TerminalScreen() {
     }
 
     LaunchedEffect(Unit) { 
-        extractLinux(context, outputLines)
+        extractLinux(context)
         isExtracted = true
-        if (setupDoneFile.exists()) {
-            startTerminal(emptyList())
-        } else {
-            showPackageDialog = true
-        }
         checkStoragePermission()
     }
 
@@ -215,7 +211,6 @@ fun TerminalScreen() {
             )
         }
         
-        // ۱. ترمینال (WebView)
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
@@ -230,6 +225,18 @@ fun TerminalScreen() {
                         fun postMessage(data: String) {
                             ptyProcess.writeData(data)
                         }
+                        
+                        // 👇 وقتی WebView آماده شد، لینوکس را استارت بزن
+                        @JavascriptInterface
+                        fun onReady() {
+                            coroutineScope.launch(Dispatchers.Main) {
+                                if (setupDoneFile.exists()) {
+                                    startTerminal(emptyList())
+                                } else {
+                                    showPackageDialog = true
+                                }
+                            }
+                        }
                     }, "AndroidInterface")
                     
                     loadUrl("file:///android_asset/terminal.html")
@@ -239,23 +246,16 @@ fun TerminalScreen() {
             modifier = Modifier.weight(1f).fillMaxWidth()
         )
 
-        // ۲. نوار ابزار کمکی (بازطراحی شده برای دسترسی آسان به CTRL)
         Column(modifier = Modifier.fillMaxWidth().background(Color(0xFF1A1A1A)).padding(4.dp)) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 if (isCtrlPressed) {
-                    // حالت CTRL فعال است
                     val ctrlKeys = listOf("C (Cancel)" to "\u0003", "D (Exit)" to "\u0004", "Z" to "\u001a")
                     ctrlKeys.forEach { (label, code) ->
                         Button(
-                            onClick = { 
-                                sendTerminalInput(code)
-                                isCtrlPressed = false 
-                            },
+                            onClick = { sendTerminalInput(code); isCtrlPressed = false },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFcc0000)),
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                             modifier = Modifier.height(32.dp)
@@ -268,7 +268,6 @@ fun TerminalScreen() {
                         modifier = Modifier.height(32.dp)
                     ) { Text("X", color = Color.White, fontSize = 10.sp) }
                 } else {
-                    // حالت عادی (CTRL در ابتدا قرار دارد)
                     Button(
                         onClick = { isCtrlPressed = true },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)),
@@ -294,8 +293,8 @@ fun TerminalScreen() {
     }
 }
 
-// توابع استخراج (بدون تغییر)
-suspend fun extractLinux(context: Context, outputLines: MutableList<String>) = withContext(Dispatchers.IO) {
+// توابع استخراج
+suspend fun extractLinux(context: Context) = withContext(Dispatchers.IO) {
     val alpineDir = File(context.filesDir, "alpine")
     val assets = context.assets.list("") ?: emptyArray()
     val assetName = if (assets.contains("alpine.tar.gz")) "alpine.tar.gz" else "alpine.tar"

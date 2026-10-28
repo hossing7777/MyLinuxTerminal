@@ -7,7 +7,6 @@
     <style>
         body, html { margin: 0; padding: 0; height: 100%; background-color: #000; overflow: hidden; }
         #terminal { width: 100%; height: 100%; padding: 2px; box-sizing: border-box; }
-        .xterm-viewport { overflow-y: auto !important; }
     </style>
 </head>
 <body>
@@ -15,37 +14,49 @@
     <script src="xterm.js"></script>
     <script src="xterm-addon-fit.js"></script>
     <script>
-        const term = new Terminal({
-            cursorBlink: true,
-            fontFamily: 'monospace',
-            fontSize: 14,
-            theme: { background: '#000000', foreground: '#00ff00' }
-        });
-        const fitAddon = new FitAddon.FitAddon();
-        term.loadAddon(fitAddon);
-        term.open(document.getElementById('terminal'));
-        fitAddon.fit();
+        let term;
+        let fitAddon;
 
-        // دریافت داده از کاتلین (به صورت Base64) و نوشتن در ترمینال
-        window.writeToTerminal = function(base64Data) {
+        window.onload = function() {
             try {
-                const text = atob(base64Data);
-                // تبدیل کاراکترهای UTF-8
-                const decoded = decodeURIComponent(escape(text));
-                term.write(decoded);
-            } catch (e) {
-                console.error("Decode error", e);
+                term = new Terminal({
+                    cursorBlink: true,
+                    fontFamily: 'monospace',
+                    fontSize: 14,
+                    theme: { background: '#000000', foreground: '#00ff00' }
+                });
+                fitAddon = new FitAddon.FitAddon();
+                term.loadAddon(fitAddon);
+                term.open(document.getElementById('terminal'));
+                fitAddon.fit();
+                
+                term.onData(function(data) {
+                    if (window.AndroidInterface) {
+                        window.AndroidInterface.postMessage(data);
+                    }
+                });
+                
+                window.onresize = function() { fitAddon.fit(); };
+                
+                // سیگنال به کاتلین که ما آماده‌ایم
+                if (window.AndroidInterface) {
+                    window.AndroidInterface.onReady();
+                }
+            } catch(e) {
+                document.getElementById('terminal').innerText = "Error: " + e.message;
             }
         };
 
-        // ارسال ورودی کاربر به کاتلین
-        term.onData(function(data) {
-            if (window.AndroidInterface) {
-                window.AndroidInterface.postMessage(data);
+        // دریافت داده به صورت JSON (امن و بدون خطا)
+        window.writeToTerminal = function(data) {
+            if (term) {
+                term.write(data);
             }
-        });
+        };
 
-        window.onresize = function() { fitAddon.fit(); };
+        window.focusTerminal = function() {
+            if (term) term.focus();
+        };
     </script>
 </body>
 </html>

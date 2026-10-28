@@ -136,7 +136,6 @@ fun TerminalScreen() {
             val tmpDir = File(context.cacheDir, "proot_tmp").absolutePath
             File(tmpDir).mkdirs()
             
-            // 👇 اصلاح مسیر touch به / برای داخل PRoot
             val initialCmd = if (!setupDoneFile.exists() && packagesToInstall.isNotEmpty()) {
                 "apk update && apk add ${packagesToInstall.joinToString(" ")} && touch /.setup_done && echo '::DONE::'"
             } else {
@@ -154,7 +153,6 @@ fun TerminalScreen() {
                 outputLines.add("Starting terminal engine...")
             }
 
-            // 👇 فراخوانی PTY
             ptyFd = ptyProcess.createPty(
                 scriptFile.absolutePath, prootPath, alpinePath, tmpDir, loaderPath, nativeLibDir, context.filesDir.absolutePath
             )
@@ -168,39 +166,42 @@ fun TerminalScreen() {
                     val len = ptyProcess.readData(buf)
                     if (len > 0) {
                         val text = String(buf, 0, len)
-                        val cleanText = text.replace("\r\n", "\n").replace("\r", "")
-                        buffer.append(cleanText)
+                        
+                        // 👇 پاسخ به درخواست موقعیت مکان‌نما (رفع مشکل [6n)
+                        if (text.contains("\u001b[6n")) {
+                            ptyProcess.writeData("\u001b[1;1R")
+                        }
 
-                        while (buffer.contains("\n")) {
-                            val idx = buffer.indexOf("\n")
-                            val line = buffer.substring(0, idx)
-                            buffer.delete(0, idx + 1)
+                        // 👇 پاکسازی کدهای ANSI
+                        val cleanText = cleanAnsi(text)
+                        
+                        if (cleanText.isNotEmpty()) {
+                            buffer.append(cleanText)
 
-                            withContext(Dispatchers.Main) {
-                                if (line.contains("::DONE::")) {
-                                    isInstalling = false
-                                    installProgress = 1f
-                                    installStatus = "Ready!"
-                                } else {
-                                    val match = regex.find(line)
-                                    if (match != null && isInstalling) {
-                                        val current = match.groupValues[1].toIntOrNull() ?: 0
-                                        val total = match.groupValues[2].toIntOrNull() ?: 1
-                                        if (total > 0) installProgress = current.toFloat() / total.toFloat()
-                                        installStatus = "Installing ($current/$total)..."
-                                    }
-                                    if (line.isNotBlank()) {
-                                        outputLines.add(line)
-                                        listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
+                            while (buffer.contains("\n")) {
+                                val idx = buffer.indexOf("\n")
+                                val line = buffer.substring(0, idx)
+                                buffer.delete(0, idx + 1)
+
+                                withContext(Dispatchers.Main) {
+                                    if (line.contains("::DONE::")) {
+                                        isInstalling = false
+                                        installProgress = 1f
+                                        installStatus = "Ready!"
+                                    } else {
+                                        val match = regex.find(line)
+                                        if (match != null && isInstalling) {
+                                            val current = match.groupValues[1].toIntOrNull() ?: 0
+                                            val total = match.groupValues[2].toIntOrNull() ?: 1
+                                            if (total > 0) installProgress = current.toFloat() / total.toFloat()
+                                            installStatus = "Installing ($current/$total)..."
+                                        }
+                                        if (line.isNotBlank()) {
+                                            outputLines.add(line)
+                                            listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
+                                        }
                                     }
                                 }
-                            }
-                        }
-                        if (buffer.contains("# ") || buffer.contains("$ ")) {
-                            withContext(Dispatchers.Main) {
-                                outputLines.add(buffer.toString())
-                                buffer.clear()
-                                listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
                             }
                         }
                     } else break
@@ -395,6 +396,12 @@ fun TerminalScreen() {
             )
         }
     }
+}
+
+// 👇 تابع پاکسازی کدهای ANSI
+fun cleanAnsi(text: String): String {
+    val ansiRegex = Regex("""\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])""")
+    return text.replace(ansiRegex, "")
 }
 
 suspend fun extractLinux(context: Context, outputLines: MutableList<String>) = withContext(Dispatchers.IO) {

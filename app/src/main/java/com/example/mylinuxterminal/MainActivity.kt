@@ -115,30 +115,11 @@ fun TerminalScreen() {
 
         coroutineScope.launch(Dispatchers.IO) {
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
-            val filesDir = context.filesDir.absolutePath
-            
-            // کپی کردن فایل‌های ضروری به filesDir
             val prootPath = File(nativeLibDir, "libproot.so").absolutePath
-            val loaderPath = File(filesDir, "loader").absolutePath
-            val tallocPath = File(filesDir, "libtalloc.so").absolutePath
-            val shmemPath = File(filesDir, "libandroid-shmem.so").absolutePath
-            
-            try {
-                File(nativeLibDir, "libproot_loader.so").copyTo(File(loaderPath), overwrite = true)
-                File(nativeLibDir, "libtalloc.so").copyTo(File(tallocPath), overwrite = true)
-                File(nativeLibDir, "libandroid-shmem.so").copyTo(File(shmemPath), overwrite = true)
-                
-                File(loaderPath).setExecutable(true)
-                File(tallocPath).setExecutable(true)
-                File(shmemPath).setExecutable(true)
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) { outputLines.add("Copy Error: ${e.message}") }
-            }
-
-            val alpinePath = File(filesDir, "alpine").absolutePath
+            val alpinePath = File(context.filesDir, "alpine").absolutePath
             val tmpDir = File(alpinePath, "tmp").absolutePath
             
-            val scriptFile = File(filesDir, "start.sh")
+            val scriptFile = File(context.filesDir, "start.sh")
             
             val installCmd = if (packagesToInstall.isNotEmpty()) {
                 "apk update && apk add ${packagesToInstall.joinToString(" ")} && echo '::DONE::' ; /bin/sh"
@@ -148,13 +129,11 @@ fun TerminalScreen() {
             
             val finalCmd = installCmd.replace("\"", "\\\"")
 
-            // اجرای PRoot با فایل‌های کپی شده
+            // استفاده مستقیم از PRoot استاتیک بدون نیاز به loader و کتابخانه‌ها
             scriptFile.writeText("""
                 echo "Script started."
                 export PROOT_TMP_DIR=$tmpDir
                 export PROOT_NO_SECCOMP=1
-                export PROOT_LOADER=$loaderPath
-                export LD_LIBRARY_PATH=$filesDir
                 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
                 export HOME=/root
                 export TERM=xterm-256color

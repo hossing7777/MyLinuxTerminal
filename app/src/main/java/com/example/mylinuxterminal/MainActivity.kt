@@ -1,8 +1,6 @@
 package com.example.mylinuxterminal
 
 import android.annotation.SuppressLint
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -10,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.util.Base64
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -28,8 +27,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -62,7 +59,6 @@ fun TerminalScreen() {
     var showPackageDialog by remember { mutableStateOf(false) }
     var isInstalling by remember { mutableStateOf(false) }
     var installProgress by remember { mutableStateOf(0f) }
-    var installStatus by remember { mutableStateOf("") }
     
     // 👇 متغیر برای حالت CTRL
     var isCtrlPressed by remember { mutableStateOf(false) }
@@ -72,11 +68,9 @@ fun TerminalScreen() {
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     val outputLines = remember { mutableStateListOf<String>() }
     val coroutineScope = rememberCoroutineScope()
-    val focusRequester = remember { FocusRequester() }
     
     val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop")
     val selectedPackages = remember { mutableStateListOf("python3", "git", "nano") }
-    
     val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
 
     val manageStorageLauncher = rememberLauncherForActivityResult(
@@ -91,7 +85,7 @@ fun TerminalScreen() {
         }
     }
 
-    // تابع ارسال دستور به PTY و حفظ فوکوس کیبورد
+    // ارسال امن داده‌ها با Base64
     fun sendTerminalInput(data: String) {
         ptyProcess.writeData(data)
         webViewRef?.evaluateJavascript("term.focus();", null)
@@ -134,9 +128,10 @@ fun TerminalScreen() {
                     if (len > 0) {
                         val text = String(buf, 0, len)
                         
+                        // 👇 ارسال با Base64 به جاوااسکریپت
                         withContext(Dispatchers.Main) {
-                            val escapedText = text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
-                            webViewRef?.evaluateJavascript("window.writeToTerminal('$escapedText');", null)
+                            val base64Data = Base64.encodeToString(text.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+                            webViewRef?.evaluateJavascript("window.writeToTerminal('$base64Data');", null)
                         }
 
                         buffer.append(text)
@@ -150,10 +145,9 @@ fun TerminalScreen() {
                                 val current = match.groupValues[1].toIntOrNull() ?: 0
                                 val total = match.groupValues[2].toIntOrNull() ?: 1
                                 if (total > 0) installProgress = current.toFloat() / total.toFloat()
-                                installStatus = "Installing ($current/$total)..."
                             }
                             if (line.contains("::DONE::")) {
-                                isInstalling = false
+                                withContext(Dispatchers.Main) { isInstalling = false }
                             }
                         }
                     } else break
@@ -245,63 +239,55 @@ fun TerminalScreen() {
             modifier = Modifier.weight(1f).fillMaxWidth()
         )
 
-        // ۲. نوار ابزار کمکی (برای کیبوردهای موبایل)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            if (isCtrlPressed) {
-                // حالت CTRL فعال است: نمایش کلیدهای ترکیبی
-                val ctrlKeys = listOf("C (Cancel)" to "\u0003", "D (Exit)" to "\u0004", "Z (Suspend)" to "\u001a", "A (Start)" to "\u0001", "E (End)" to "\u0005")
-                ctrlKeys.forEach { (label, code) ->
-                    Button(
-                        onClick = { 
-                            sendTerminalInput(code)
-                            isCtrlPressed = false 
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFcc0000)),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        modifier = Modifier.height(36.dp)
-                    ) {
-                        Text(text = label, color = Color.White, fontSize = 12.sp)
+        // ۲. نوار ابزار کمکی (بازطراحی شده برای دسترسی آسان به CTRL)
+        Column(modifier = Modifier.fillMaxWidth().background(Color(0xFF1A1A1A)).padding(4.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                if (isCtrlPressed) {
+                    // حالت CTRL فعال است
+                    val ctrlKeys = listOf("C (Cancel)" to "\u0003", "D (Exit)" to "\u0004", "Z" to "\u001a")
+                    ctrlKeys.forEach { (label, code) ->
+                        Button(
+                            onClick = { 
+                                sendTerminalInput(code)
+                                isCtrlPressed = false 
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFcc0000)),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) { Text(text = label, color = Color.White, fontSize = 10.sp) }
                     }
-                }
-                // دکمه لغو CTRL
-                Button(
-                    onClick = { isCtrlPressed = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                    modifier = Modifier.height(36.dp)
-                ) {
-                    Text("X", color = Color.White, fontSize = 12.sp)
-                }
-            } else {
-                // حالت عادی: نمایش کلیدهای ضروری
-                val keys = listOf(
-                    "ESC" to "\u001b", "TAB" to "\t", "/" to "/", "-" to "-",
-                    "UP" to "\u001b[A", "DOWN" to "\u001b[B", "LEFT" to "\u001b[D", "RIGHT" to "\u001b[C"
-                )
-                keys.forEach { (label, code) ->
                     Button(
-                        onClick = { sendTerminalInput(code) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        modifier = Modifier.height(36.dp)
-                    ) {
-                        Text(text = label, color = Color.White, fontSize = 12.sp)
+                        onClick = { isCtrlPressed = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) { Text("X", color = Color.White, fontSize = 10.sp) }
+                } else {
+                    // حالت عادی (CTRL در ابتدا قرار دارد)
+                    Button(
+                        onClick = { isCtrlPressed = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) { Text("CTRL", color = Color.White, fontSize = 10.sp) }
+
+                    val keys = listOf(
+                        "ESC" to "\u001b", "TAB" to "\t", "/" to "/", "-" to "-",
+                        "UP" to "\u001b[A", "DOWN" to "\u001b[B", "LEFT" to "\u001b[D", "RIGHT" to "\u001b[C"
+                    )
+                    keys.forEach { (label, code) ->
+                        Button(
+                            onClick = { sendTerminalInput(code) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) { Text(text = label, color = Color.White, fontSize = 10.sp) }
                     }
-                }
-                // دکمه CTRL
-                Button(
-                    onClick = { isCtrlPressed = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                    modifier = Modifier.height(36.dp)
-                ) {
-                    Text("CTRL", color = Color.White, fontSize = 12.sp)
                 }
             }
         }

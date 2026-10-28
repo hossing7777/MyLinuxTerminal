@@ -69,6 +69,7 @@ fun TerminalScreen() {
     var isInstalling by remember { mutableStateOf(false) }
     var installProgress by remember { mutableStateOf(0f) }
     var installStatus by remember { mutableStateOf("") }
+    var isTerminalRunning by remember { mutableStateOf(false) }
 
     var inputText by remember { mutableStateOf("") }
     var fontSize by remember { mutableStateOf(14.sp) }
@@ -76,8 +77,9 @@ fun TerminalScreen() {
     var bgColor by remember { mutableStateOf(Color.Black) }
     var showSettings by remember { mutableStateOf(false) }
     
-    val ptyProcess = remember { PtyProcess() }
-    var ptyFd by remember { mutableStateOf(-1) }
+    var shellProcess by remember { mutableStateOf<Process?>(null) }
+    var shellWriter by remember { mutableStateOf<BufferedWriter?>(null) }
+    
     val outputLines = remember { mutableStateListOf<String>() }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -111,7 +113,8 @@ fun TerminalScreen() {
     }
 
     fun startTerminal(packagesToInstall: List<String> = emptyList()) {
-        if (ptyFd > 0) return
+        if (isTerminalRunning) return
+        isTerminalRunning = true
 
         coroutineScope.launch(Dispatchers.IO) {
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
@@ -119,94 +122,78 @@ fun TerminalScreen() {
             val alpinePath = File(context.filesDir, "alpine").absolutePath
             val tmpDir = File(alpinePath, "tmp").absolutePath
             
-            val scriptFile = File(context.filesDir, "start.sh")
-            
-            val installCmd = if (packagesToInstall.isNotEmpty()) {
-                "apk update && apk add ${packagesToInstall.joinToString(" ")} && echo '::DONE::' ; /bin/sh"
+            val initialCmd = if (packagesToInstall.isNotEmpty()) {
+                "apk update && apk add ${packagesToInstall.joinToString(" ")} && echo '::DONE::'"
             } else {
-                "/bin/sh"
+                "echo '::DONE::'"
             }
-            
-            val finalCmd = installCmd.replace("\"", "\\\"")
 
-            // 👇 استفاده ۱۰۰٪ از PRoot استاتیک (بدون LD_LIBRARY_PATH و PROOT_LOADER)
-            scriptFile.writeText("""
-                echo "Script started."
-                export PROOT_TMP_DIR=$tmpDir
-                export PROOT_NO_SECCOMP=1
-                export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-                export HOME=/root
-                export TERM=xterm-256color
+            try {
+                // 👇 استفاده از ProcessBuilder پایدار
+                val pb = ProcessBuilder(
+                    prootPath, "--kill-on-exit", "--link2symlink", "--sysvipc", "-0",
+                    "-r", alpinePath, "-w", "/", "-b", "/dev", "-b", "/proc", "-b", "/sys",
+                    "-b", "/storage/emulated/0:/sdcard", "/bin/sh", "-c", "$initialCmd; exec /bin/sh"
+                )
                 
-                echo "Executing static PRoot..."
-                $prootPath --kill-on-exit --link2symlink --sysvipc -0 -r $alpinePath -w / -b /dev -b /proc -b /sys -b /storage/emulated/0:/sdcard /bin/sh -c "$finalCmd" 2>&1
-                echo "PRoot exited with code $?"
-            """.trimIndent())
-            scriptFile.setExecutable(true)
+                val env = pb.environment()
+                env["PROOT_TMP_DIR"] = tmpDir
+                env["PROOT_NO_SECCOMP"] = "1"
+                env["PROOT_FORCE_FOREIGN_BINARY"] = "1" // 👈 کلید حل مشکل سامسونگ
+                env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                env["HOME"] = "/root"
+                env["TERM"] = "xterm-256color"
 
-            withContext(Dispatchers.Main) { 
-                outputLines.clear()
-                outputLines.add("Starting terminal engine...")
-            }
+                pb.redirectErrorStream(true)
+                val process = pb.start()
+                shellProcess = process
+                val writer = BufferedWriter(OutputStreamWriter(process.outputStream))
+                shellWriter = writer
 
-            ptyFd = ptyProcess.createPty("sh ${scriptFile.absolutePath}")
-            
-            if (ptyFd > 0) {
-                val buf = ByteArray(4096)
-                val regex = Regex("""\((\d+)/(\d+)\)""")
+                withContext(Dispatchers.Main) { 
+                    outputLines.clear()
+                    outputLines.add("Starting terminal engine...")
+                }
+
+                val reader = BufferedReader(InputStreamReader(process.inputStream))
                 val buffer = StringBuilder()
+                val regex = Regex("""\((\d+)/(\d+)\)""")
 
-                while (true) {
-                    val len = ptyProcess.readData(buf)
-                    if (len > 0) {
-                        val text = String(buf, 0, len)
-                        val cleanText = text.replace("\r\n", "\n").replace("\r", "")
-                        buffer.append(cleanText)
-
-                        while (buffer.contains("\n")) {
-                            val idx = buffer.indexOf("\n")
-                            val line = buffer.substring(0, idx)
-                            buffer.delete(0, idx + 1)
-
-                            withContext(Dispatchers.Main) {
-                                if (line.contains("::DONE::")) {
-                                    isInstalling = false
-                                    installProgress = 1f
-                                    installStatus = "Done!"
-                                } else {
-                                    val match = regex.find(line)
-                                    if (match != null && isInstalling) {
-                                        val current = match.groupValues[1].toIntOrNull() ?: 0
-                                        val total = match.groupValues[2].toIntOrNull() ?: 1
-                                        if (total > 0) installProgress = current.toFloat() / total.toFloat()
-                                        installStatus = "Installing ($current/$total)..."
-                                    }
-                                    if (line.isNotBlank()) {
-                                        outputLines.add(line)
-                                        listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
-                                    }
-                                }
+                var line = reader.readLine()
+                while (line != null) {
+                    val currentLine = line
+                    
+                    withContext(Dispatchers.Main) {
+                        if (currentLine.contains("::DONE::")) {
+                            isInstalling = false
+                            installProgress = 1f
+                            installStatus = "Done! You are now in Alpine Linux."
+                        } else {
+                            val match = regex.find(currentLine)
+                            if (match != null && isInstalling) {
+                                val current = match.groupValues[1].toIntOrNull() ?: 0
+                                val total = match.groupValues[2].toIntOrNull() ?: 1
+                                if (total > 0) installProgress = current.toFloat() / total.toFloat()
+                                installStatus = "Installing ($current/$total)..."
                             }
-                        }
-                        
-                        if (buffer.contains("# ") || buffer.contains("$ ")) {
-                            withContext(Dispatchers.Main) {
-                                outputLines.add(buffer.toString())
-                                buffer.clear()
+                            
+                            if (currentLine.isNotBlank()) {
+                                outputLines.add(currentLine)
                                 listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
                             }
                         }
-                    } else {
-                        withContext(Dispatchers.Main) { 
-                            outputLines.add("Terminal process ended (Read returned: $len).") 
-                        }
-                        break 
                     }
+                    line = reader.readLine()
                 }
-            } else {
-                withContext(Dispatchers.Main) { 
-                    outputLines.add("Failed to create PTY. Error code: $ptyFd") 
-                    isInstalling = false
+                
+                withContext(Dispatchers.Main) {
+                    outputLines.add("Terminal process ended.")
+                    isTerminalRunning = false
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    outputLines.add("Error starting terminal: ${e.message}")
+                    isTerminalRunning = false
                 }
             }
         }
@@ -311,9 +298,14 @@ fun TerminalScreen() {
         )
     }
 
-    fun runCommand(cmd: String) {
-        if (ptyFd <= 0) return
-        ptyProcess.writeData(cmd + "\n")
+    fun sendCommand(cmd: String) {
+        if (shellWriter == null) return
+        try {
+            shellWriter?.write(cmd + "\n")
+            shellWriter?.flush()
+        } catch (e: Exception) {
+            outputLines.add("Write Error: ${e.message}")
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize().background(bgColor).padding(8.dp)) {
@@ -364,7 +356,7 @@ fun TerminalScreen() {
             
             keys.forEach { (label, code) ->
                 Button(
-                    onClick = { ptyProcess.writeData(code); focusRequester.requestFocus() },
+                    onClick = { sendCommand(code); focusRequester.requestFocus() },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                     modifier = Modifier.height(32.dp)
                 ) {
@@ -393,8 +385,8 @@ fun TerminalScreen() {
                         val c = newText.lastOrNull()?.uppercaseChar()
                         if (c != null) {
                             val ascii = c.code - 64
-                            if (ascii in 1..26) ptyProcess.writeData(ascii.toChar().toString())
-                            else ptyProcess.writeData(newText)
+                            if (ascii in 1..26) sendCommand(ascii.toChar().toString())
+                            else sendCommand(newText)
                         }
                         isCtrlPressed = false
                         inputText = ""
@@ -408,7 +400,7 @@ fun TerminalScreen() {
                 enabled = isExtracted,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { 
-                    runCommand(inputText)
+                    sendCommand(inputText)
                     inputText = ""
                     focusRequester.requestFocus()
                 })

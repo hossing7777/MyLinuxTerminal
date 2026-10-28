@@ -8,7 +8,6 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
-        externalNativeBuild { cmake { cppFlags += "" } }
     }
     buildTypes {
         release {
@@ -20,9 +19,13 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.8" }
-    packaging { jniLibs { useLegacyPackaging = true } }
+    packaging { 
+        jniLibs { 
+            useLegacyPackaging = true
+            keepDebugSymbols += "**/*.so" 
+        } 
+    }
     androidResources { noCompress += listOf("tar", "gz", "tar.gz") }
-    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
 }
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")

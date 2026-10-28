@@ -116,7 +116,6 @@ fun TerminalScreen() {
         coroutineScope.launch(Dispatchers.IO) {
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
             val prootPath = File(nativeLibDir, "libproot.so").absolutePath
-            val loaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
             val alpinePath = File(context.filesDir, "alpine").absolutePath
             val tmpDir = File(alpinePath, "tmp").absolutePath
             
@@ -130,22 +129,16 @@ fun TerminalScreen() {
             
             val finalCmd = installCmd.replace("\"", "\\\"")
 
-            // 👇 حذف exec و اضافه کردن بررسی دقیق کتابخانه‌ها
+            // 👇 استفاده از PRoot استاتیک (بدون PROOT_LOADER و LD_LIBRARY_PATH)
             scriptFile.writeText("""
                 echo "Script started."
                 export PROOT_TMP_DIR=$tmpDir
                 export PROOT_NO_SECCOMP=1
-                export PROOT_LOADER=$loaderPath
-                export LD_LIBRARY_PATH=$nativeLibDir
                 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
                 export HOME=/root
                 export TERM=xterm-256color
                 
-                echo "Checking libraries..."
-                ls -l $nativeLibDir/libtalloc.so
-                ls -l $nativeLibDir/libandroid-shmem.so
-                
-                echo "Executing PRoot..."
+                echo "Executing static PRoot..."
                 $prootPath --kill-on-exit --link2symlink --sysvipc -0 -r $alpinePath -w / -b /dev -b /proc -b /sys -b /storage/emulated/0:/sdcard /bin/sh -c "$finalCmd" 2>&1
                 echo "PRoot exited with code $?"
             """.trimIndent())

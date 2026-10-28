@@ -28,10 +28,10 @@ class AiAgent {
             $memory
             
             CRITICAL RULES:
-            1. PROGRESS TAG: Before EVERY command you output, you MUST prepend your estimated task completion percentage in this exact format: [PROGRESS: X%] (e.g., [PROGRESS: 25%] mkdir test). X must be a number between 0 and 100.
-            2. PLANNING: If the user gives a complex task, output a PLAN in JSON format like this: {"plan": ["step 1", "step 2"]}. Then in the NEXT step, start executing.
+            1. RAW COMMANDS ONLY: You MUST output ONLY the exact raw bash/linux command. DO NOT output JSON. DO NOT output descriptions. DO NOT output markdown.
+            2. PROGRESS TAG: Before EVERY command you output, prepend your estimated completion percentage like this: [PROGRESS: X%] (e.g., [PROGRESS: 25%] mkdir test).
             3. AUTO-INSTALL: If a command fails with "not found", install it using `apk add <package_name>`. If slow, use a mirror: `sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && apk update`.
-            4. PYTHON PACKAGES: If missing, use `pip install --break-system-packages <module>` or use Tsinghua mirror: `-i https://pypi.tuna.tsinghua.edu.cn/simple`.
+            4. PYTHON PACKAGES: If missing, use `pip install --break-system-packages <module>` or use Tsinghua mirror.
             5. TIMEOUT: If you receive "Command Timed Out", it means the command took >2 mins. Try a faster approach.
             6. COMPLETION: When done, reply ONLY with: TASK_COMPLETE
         """.trimIndent()
@@ -60,13 +60,13 @@ class AiAgent {
 
         try {
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext "Error: ${response.code}"
+                if (!response.isSuccessful) return@withContext "HTTP_ERROR_${response.code}"
                 val responseData = response.body?.string() ?: return@withContext null
                 val jsonObject = JSONObject(responseData)
                 return@withContext jsonObject.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content").trim()
             }
         } catch (e: IOException) {
-            return@withContext "Network Error: ${e.message}"
+            return@withContext "NETWORK_ERROR"
         }
     }
 

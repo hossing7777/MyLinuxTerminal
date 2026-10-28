@@ -123,12 +123,12 @@ fun TerminalScreen() {
         }
     }
 
-    // تابع ارسال دستور به PTY و حفظ فوکوس
+    // تابع ارسال دستور و حفظ اجباری کیبورد
     fun sendToPty(data: String) {
         if (ptyFd > 0) {
             ptyProcess.writeData(data)
         }
-        // اجباد به باز نگه داشتن کیبورد
+        // 👇 ترفند باز نگه داشتن کیبورد
         focusRequester.requestFocus()
         keyboardController?.show()
     }
@@ -175,7 +175,8 @@ fun TerminalScreen() {
                     val len = ptyProcess.readData(buf)
                     if (len > 0) {
                         val text = String(buf, 0, len)
-                        val cleanText = cleanAnsi(text) // 👈 پاکسازی کدهای رنگی
+                        // 👇 تابع تمیزکننده قوی‌تر
+                        val cleanText = cleanAnsi(text)
 
                         buffer.append(cleanText)
 
@@ -197,14 +198,13 @@ fun TerminalScreen() {
                                         if (total > 0) installProgress = current.toFloat() / total.toFloat()
                                         installStatus = "Installing ($current/$total)..."
                                     }
-                                    if (line.isNotBlank()) {
+                                    if (line.isNotBlank() && !line.contains("[7") && !line.contains("[8")) {
                                         outputLines.add(line)
                                         listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
                                     }
                                 }
                             }
                         }
-                        // اگر پرامپت بود، نمایش بده
                         if (buffer.contains("# ") || buffer.contains("$ ")) {
                             withContext(Dispatchers.Main) {
                                 outputLines.add(buffer.toString())
@@ -335,7 +335,6 @@ fun TerminalScreen() {
             }
         }
         
-        // 👇 دکمه‌های کمکی با طراحی بهتر
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -402,10 +401,15 @@ fun TerminalScreen() {
     }
 }
 
-// 👇 تابع پاکسازی کدهای ANSI
+// 👇 تابع پاکسازی قوی‌تر برای حذف کامل کدهای apk
 fun cleanAnsi(text: String): String {
-    val ansiRegex = Regex("""\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])""")
-    return text.replace(ansiRegex, "")
+    // حذف کدهای ANSI استاندارد
+    var cleaned = text.replace(Regex("""\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])"""), "")
+    // حذف کردن کدهای مربوط به نوار پیشرفت apk (مثل [7 0% [8)
+    cleaned = cleaned.replace(Regex("""\[\d+\s+\d+%"""), "")
+    cleaned = cleaned.replace(Regex("""\[[78]"""), "")
+    // حذف فاصله‌های اضافی
+    return cleaned
 }
 
 suspend fun extractLinux(context: Context, outputLines: MutableList<String>) = withContext(Dispatchers.IO) {

@@ -1,6 +1,7 @@
 package com.example.mylinuxterminal
 
-import android.annotation.SuppressLint
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -9,37 +10,43 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
 import android.util.Log
-import android.webkit.JavascriptInterface
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
-import org.json.JSONObject
 import java.io.*
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -52,25 +59,36 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun TerminalScreen() {
     val context = LocalContext.current
     var isExtracted by remember { mutableStateOf(false) }
     var showPackageDialog by remember { mutableStateOf(false) }
+    
     var isInstalling by remember { mutableStateOf(false) }
     var installProgress by remember { mutableStateOf(0f) }
-    var isCtrlPressed by remember { mutableStateOf(false) }
+    var installStatus by remember { mutableStateOf("") }
+    var isTerminalRunning by remember { mutableStateOf(false) }
+
+    var inputText by remember { mutableStateOf("") }
+    var fontSize by remember { mutableStateOf(14.sp) }
+    var textColor by remember { mutableStateOf(Color.Green) }
+    var bgColor by remember { mutableStateOf(Color.Black) }
+    var showSettings by remember { mutableStateOf(false) }
     
     val ptyProcess = remember { PtyProcess() }
     var ptyFd by remember { mutableStateOf(-1) }
-    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    val outputLines = remember { mutableStateListOf<String>() }
+    val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
+    val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
-    
+
     val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop")
     val selectedPackages = remember { mutableStateListOf("python3", "git", "nano") }
+    var isCtrlPressed by remember { mutableStateOf(false) }
+    
     val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
 
     val manageStorageLauncher = rememberLauncherForActivityResult(
@@ -85,15 +103,39 @@ fun TerminalScreen() {
         }
     }
 
-    fun sendTerminalInput(data: String) {
-        ptyProcess.writeData(data)
-        webViewRef?.evaluateJavascript("window.focusTerminal();", null)
-        webViewRef?.requestFocus()
+    fun copyAllText() {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Terminal", outputLines.joinToString("\n")))
+        outputLines.add("--- Copied ---")
+    }
+
+    fun resetApp() {
+        coroutineScope.launch(Dispatchers.IO) {
+            File(context.filesDir, "alpine").deleteRecursively()
+            withContext(Dispatchers.Main) {
+                outputLines.clear()
+                outputLines.add("App data cleared. Restarting...")
+                isExtracted = false
+                isTerminalRunning = false
+                showSettings = false
+                coroutineScope.launch { extractLinux(context, outputLines) }
+            }
+        }
+    }
+
+    // تابع ارسال دستور به PTY و حفظ فوکوس
+    fun sendToPty(data: String) {
+        if (ptyFd > 0) {
+            ptyProcess.writeData(data)
+        }
+        // اجباد به باز نگه داشتن کیبورد
+        focusRequester.requestFocus()
         keyboardController?.show()
     }
 
     fun startTerminal(packagesToInstall: List<String> = emptyList()) {
-        if (ptyFd > 0) return
+        if (isTerminalRunning) return
+        isTerminalRunning = true
 
         coroutineScope.launch(Dispatchers.IO) {
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
@@ -115,6 +157,11 @@ fun TerminalScreen() {
             """.trimIndent())
             scriptFile.setExecutable(true)
 
+            withContext(Dispatchers.Main) { 
+                outputLines.clear()
+                outputLines.add("Starting terminal engine...")
+            }
+
             ptyFd = ptyProcess.createPty(
                 scriptFile.absolutePath, prootPath, alpinePath, tmpDir, loaderPath, nativeLibDir, context.filesDir.absolutePath
             )
@@ -128,39 +175,58 @@ fun TerminalScreen() {
                     val len = ptyProcess.readData(buf)
                     if (len > 0) {
                         val text = String(buf, 0, len)
-                        
-                        withContext(Dispatchers.Main) {
-                            val quotedText = JSONObject.quote(text)
-                            webViewRef?.evaluateJavascript("window.writeToTerminal($quotedText);", null)
-                        }
+                        val cleanText = cleanAnsi(text) // 👈 پاکسازی کدهای رنگی
 
-                        buffer.append(text)
+                        buffer.append(cleanText)
+
                         while (buffer.contains("\n")) {
                             val idx = buffer.indexOf("\n")
                             val line = buffer.substring(0, idx)
                             buffer.delete(0, idx + 1)
-                            
+
                             withContext(Dispatchers.Main) {
-                                val match = regex.find(line)
-                                if (match != null && isInstalling) {
-                                    val current = match.groupValues[1].toIntOrNull() ?: 0
-                                    val total = match.groupValues[2].toIntOrNull() ?: 1
-                                    if (total > 0) installProgress = current.toFloat() / total.toFloat()
-                                }
                                 if (line.contains("::DONE::")) {
                                     isInstalling = false
+                                    installProgress = 1f
+                                    installStatus = "Ready!"
+                                } else {
+                                    val match = regex.find(line)
+                                    if (match != null && isInstalling) {
+                                        val current = match.groupValues[1].toIntOrNull() ?: 0
+                                        val total = match.groupValues[2].toIntOrNull() ?: 1
+                                        if (total > 0) installProgress = current.toFloat() / total.toFloat()
+                                        installStatus = "Installing ($current/$total)..."
+                                    }
+                                    if (line.isNotBlank()) {
+                                        outputLines.add(line)
+                                        listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
+                                    }
                                 }
+                            }
+                        }
+                        // اگر پرامپت بود، نمایش بده
+                        if (buffer.contains("# ") || buffer.contains("$ ")) {
+                            withContext(Dispatchers.Main) {
+                                outputLines.add(buffer.toString())
+                                buffer.clear()
+                                listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
                             }
                         }
                     } else break
                 }
+                withContext(Dispatchers.Main) { outputLines.add("Terminal process ended.") }
             }
         }
     }
 
     LaunchedEffect(Unit) { 
-        extractLinux(context)
+        extractLinux(context, outputLines)
         isExtracted = true
+        if (setupDoneFile.exists()) {
+            startTerminal(emptyList())
+        } else {
+            showPackageDialog = true
+        }
         checkStoragePermission()
     }
 
@@ -172,7 +238,7 @@ fun TerminalScreen() {
                 LazyColumn {
                     items(availablePackages) { pkg ->
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                         ) {
                             Checkbox(
@@ -202,98 +268,147 @@ fun TerminalScreen() {
         )
     }
 
-    Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        if (isInstalling) {
-            LinearProgressIndicator(
-                progress = installProgress,
-                modifier = Modifier.fillMaxWidth(),
-                color = Color.Green,
-                trackColor = Color.DarkGray
-            )
-        }
-        
-        AndroidView(
-            factory = { ctx ->
-                WebView(ctx).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.useWideViewPort = true
-                    settings.loadWithOverviewMode = true
-                    webViewClient = WebViewClient()
-                    
-                    addJavascriptInterface(object {
-                        @JavascriptInterface
-                        fun postMessage(data: String) {
-                            ptyProcess.writeData(data)
-                        }
-                        
-                        @JavascriptInterface
-                        fun onReady() {
-                            coroutineScope.launch(Dispatchers.Main) {
-                                if (setupDoneFile.exists()) {
-                                    startTerminal(emptyList())
-                                } else {
-                                    showPackageDialog = true
-                                }
-                            }
-                        }
-                    }, "AndroidInterface")
-                    
-                    loadUrl("file:///android_asset/terminal.html")
-                    webViewRef = this
+    if (showSettings) {
+        AlertDialog(
+            onDismissRequest = { showSettings = false },
+            title = { Text("Settings") },
+            text = {
+                Column {
+                    Text("Font Size: ${fontSize.value.toInt()}sp")
+                    Slider(value = fontSize.value, onValueChange = { fontSize = it.sp }, valueRange = 8f..36f)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Text Color:")
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Button(onClick = { textColor = Color.Green }) { Text("Green") }
+                        Button(onClick = { textColor = Color.White }) { Text("White") }
+                        Button(onClick = { textColor = Color.Yellow }) { Text("Yellow") }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Background:")
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Button(onClick = { bgColor = Color.Black }) { Text("Black") }
+                        Button(onClick = { bgColor = Color(0xFF1A1A1A) }) { Text("Dark") }
+                        Button(onClick = { bgColor = Color(0xFF001F3F) }) { Text("Navy") }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { resetApp() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                    ) { Text("Reset App (Reinstall)") }
                 }
             },
-            modifier = Modifier.weight(1f).fillMaxWidth()
+            confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Close") } }
         )
+    }
 
-        Column(modifier = Modifier.fillMaxWidth().background(Color(0xFF1A1A1A)).padding(4.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                if (isCtrlPressed) {
-                    val ctrlKeys = listOf("C (Cancel)" to "\u0003", "D (Exit)" to "\u0004", "Z" to "\u001a")
-                    ctrlKeys.forEach { (label, code) ->
-                        Button(
-                            onClick = { sendTerminalInput(code); isCtrlPressed = false },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFcc0000)),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                            modifier = Modifier.height(32.dp)
-                        ) { Text(text = label, color = Color.White, fontSize = 10.sp) }
-                    }
-                    Button(
-                        onClick = { isCtrlPressed = false },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                        modifier = Modifier.height(32.dp)
-                    ) { Text("X", color = Color.White, fontSize = 10.sp) }
-                } else {
-                    Button(
-                        onClick = { isCtrlPressed = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                        modifier = Modifier.height(32.dp)
-                    ) { Text("CTRL", color = Color.White, fontSize = 10.sp) }
+    Column(modifier = Modifier.fillMaxSize().background(bgColor).padding(8.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            TextButton(onClick = { copyAllText() }) { Text("Copy All", color = Color.Cyan, fontSize = 12.sp) }
+            TextButton(onClick = { showSettings = true }) { Text("⚙️ Settings", color = Color.Cyan, fontSize = 12.sp) }
+        }
 
-                    val keys = listOf(
-                        "ESC" to "\u001b", "TAB" to "\t", "/" to "/", "-" to "-",
-                        "UP" to "\u001b[A", "DOWN" to "\u001b[B", "LEFT" to "\u001b[D", "RIGHT" to "\u001b[C"
-                    )
-                    keys.forEach { (label, code) ->
-                        Button(
-                            onClick = { sendTerminalInput(code) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                            modifier = Modifier.height(32.dp)
-                        ) { Text(text = label, color = Color.White, fontSize = 10.sp) }
-                    }
+        if (isInstalling) {
+            Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                Text(installStatus, color = Color.Cyan, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                Spacer(modifier = Modifier.height(4.dp))
+                LinearProgressIndicator(
+                    progress = installProgress,
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color.Green,
+                    trackColor = Color.DarkGray
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text("${(installProgress * 100).toInt()}%", color = Color.Green, fontSize = 10.sp)
+            }
+        }
+        
+        LazyColumn(
+            state = listState, 
+            modifier = Modifier.weight(1f).pointerInput(Unit) {
+                detectTransformGestures { _, _, zoom, _ ->
+                    fontSize = (fontSize.value * zoom).coerceIn(8f, 36f).sp
                 }
             }
+        ) {
+            items(outputLines) { line -> 
+                SelectionContainer { Text(text = line, color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize) }
+            }
+        }
+        
+        // 👇 دکمه‌های کمکی با طراحی بهتر
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            if (isCtrlPressed) {
+                val ctrlKeys = listOf("C (Cancel)" to "\u0003", "D (Exit)" to "\u0004", "Z" to "\u001a")
+                ctrlKeys.forEach { (label, code) ->
+                    Button(
+                        onClick = { sendToPty(code); isCtrlPressed = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFcc0000)),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) { Text(text = label, color = Color.White, fontSize = 10.sp) }
+                }
+                Button(
+                    onClick = { isCtrlPressed = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.height(32.dp)
+                ) { Text("X", color = Color.White, fontSize = 10.sp) }
+            } else {
+                Button(
+                    onClick = { isCtrlPressed = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.height(32.dp)
+                ) { Text("CTRL", color = Color.White, fontSize = 10.sp) }
+
+                val keys = listOf(
+                    "ESC" to "\u001b", "TAB" to "\t", "/" to "/", "-" to "-",
+                    "UP" to "\u001b[A", "DOWN" to "\u001b[B", "LEFT" to "\u001b[D", "RIGHT" to "\u001b[C"
+                )
+                keys.forEach { (label, code) ->
+                    Button(
+                        onClick = { sendToPty(code) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) { Text(text = label, color = Color.White, fontSize = 10.sp) }
+                }
+            }
+        }
+
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Text(text = "$ ", color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize)
+            BasicTextField(
+                value = inputText, 
+                onValueChange = { inputText = it },
+                textStyle = TextStyle(color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize),
+                modifier = Modifier.weight(1f).focusRequester(focusRequester),
+                singleLine = true, 
+                enabled = isExtracted,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { 
+                    sendToPty(inputText + "\n")
+                    inputText = ""
+                    focusRequester.requestFocus()
+                })
+            )
         }
     }
 }
 
-suspend fun extractLinux(context: Context) = withContext(Dispatchers.IO) {
+// 👇 تابع پاکسازی کدهای ANSI
+fun cleanAnsi(text: String): String {
+    val ansiRegex = Regex("""\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])""")
+    return text.replace(ansiRegex, "")
+}
+
+suspend fun extractLinux(context: Context, outputLines: MutableList<String>) = withContext(Dispatchers.IO) {
     val alpineDir = File(context.filesDir, "alpine")
     val assets = context.assets.list("") ?: emptyArray()
     val assetName = if (assets.contains("alpine.tar.gz")) "alpine.tar.gz" else "alpine.tar"
@@ -302,7 +417,10 @@ suspend fun extractLinux(context: Context) = withContext(Dispatchers.IO) {
         try {
             alpineDir.mkdirs()
             context.assets.open(assetName).use { input -> extractTarSmart(input, alpineDir) }
-        } catch (e: Exception) { Log.e("Terminal", "Extract Error", e) }
+            withContext(Dispatchers.Main) { outputLines.add("Extraction successful!") }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) { outputLines.add("Extract Error: ${e.toString()}") }
+        }
     }
     fixAlpineStructure(alpineDir)
 }

@@ -19,7 +19,12 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.8" }
-    packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += "**/*.so" } }
+    packaging { 
+        jniLibs { 
+            useLegacyPackaging = true
+            keepDebugSymbols += "**/*.so" 
+        } 
+    }
     androidResources { noCompress += listOf("tar", "gz", "tar.gz") }
 }
 dependencies {

@@ -119,8 +119,12 @@ fun TerminalScreen() {
         coroutineScope.launch(Dispatchers.IO) {
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
             val prootPath = File(nativeLibDir, "libproot.so").absolutePath
+            val loaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
             val alpinePath = File(context.filesDir, "alpine").absolutePath
-            val tmpDir = File(alpinePath, "tmp").absolutePath
+            
+            // استفاده از cacheDir برای پوشه موقت (بسیار مهم برای سامسونگ)
+            val tmpDir = File(context.cacheDir, "proot_tmp").absolutePath
+            File(tmpDir).mkdirs()
             
             val initialCmd = if (packagesToInstall.isNotEmpty()) {
                 "apk update && apk add ${packagesToInstall.joinToString(" ")} && echo '::DONE::'"
@@ -129,7 +133,6 @@ fun TerminalScreen() {
             }
 
             try {
-                // 👇 استفاده از ProcessBuilder پایدار
                 val pb = ProcessBuilder(
                     prootPath, "--kill-on-exit", "--link2symlink", "--sysvipc", "-0",
                     "-r", alpinePath, "-w", "/", "-b", "/dev", "-b", "/proc", "-b", "/sys",
@@ -139,7 +142,8 @@ fun TerminalScreen() {
                 val env = pb.environment()
                 env["PROOT_TMP_DIR"] = tmpDir
                 env["PROOT_NO_SECCOMP"] = "1"
-                env["PROOT_FORCE_FOREIGN_BINARY"] = "1" // 👈 کلید حل مشکل سامسونگ
+                env["PROOT_LOADER"] = loaderPath
+                env["LD_LIBRARY_PATH"] = nativeLibDir // مسیر پیدا کردن libtalloc
                 env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
                 env["HOME"] = "/root"
                 env["TERM"] = "xterm-256color"
@@ -156,7 +160,6 @@ fun TerminalScreen() {
                 }
 
                 val reader = BufferedReader(InputStreamReader(process.inputStream))
-                val buffer = StringBuilder()
                 val regex = Regex("""\((\d+)/(\d+)\)""")
 
                 var line = reader.readLine()

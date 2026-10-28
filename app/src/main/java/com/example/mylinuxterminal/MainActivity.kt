@@ -91,13 +91,11 @@ fun TerminalScreen() {
     var bgColor by remember { mutableStateOf(Color.Black) }
     var showSettings by remember { mutableStateOf(false) }
     
-    // متغیرهای ایجنت
     var showAiDialog by remember { mutableStateOf(false) }
     var aiPrompt by remember { mutableStateOf("") }
     var isAiRunning by remember { mutableStateOf(false) }
     var agentJob by remember { mutableStateOf<Job?>(null) }
     
-    // 👇 بارگذاری تاریخچه از حافظه
     val agentLogs = remember { 
         val logs = mutableStateListOf<String>()
         val saved = prefs.getString("agent_logs", "[]")
@@ -156,7 +154,6 @@ fun TerminalScreen() {
         keyboardController?.show()
     }
 
-    // 👇 اجرای دستور با stty -echo (برای مخفی کردن تایپ شدن دستور)
     suspend fun executeCommandAndWait(command: String): String {
         return withContext(Dispatchers.IO) {
             val deferred = CompletableDeferred<String>()
@@ -165,7 +162,6 @@ fun TerminalScreen() {
             terminalState.commandOutputBuffer.clear()
             terminalState.isWaitingForCommand = true
             
-            // stty -echo دستور را مخفی می‌کند، سپس اجرا، سپس echo را برمی‌گرداند
             ptyProcess.writeData("stty -echo; $command 2>&1; echo \"${terminalState.currentMarker}\"; stty echo\n")
             
             deferred.await()
@@ -246,10 +242,9 @@ fun TerminalScreen() {
         checkStoragePermission()
     }
 
-    // 👇 تابع توقف اضطراری
     fun stopAgent() {
         agentJob?.cancel()
-        sendToPty("\u0003") // ارسال Ctrl+C به لینوکس
+        sendToPty("\u0003")
         isAiRunning = false
         agentLogs.add("🛑 عملیات توسط کاربر متوقف شد.")
         saveHistory()
@@ -265,11 +260,21 @@ fun TerminalScreen() {
             history.put(JSONObject().put("role", "user").put("content", userRequest))
             
             var step = 0
-            val maxSteps = 8
+            var batch = 1
+            val maxStepsPerBatch = 8 // سقف هر دسته (می‌توانید تغییر دهید)
             
-            while (step < maxSteps && isAiRunning) {
+            while (isAiRunning) {
                 step++
-                agentLogs.add("🤖 در حال فکر کردن (مرحله $step)...")
+                if (step > maxStepsPerBatch) {
+                    // 👇 اگر به سقف رسید، به جای توقف، به هوش مصنوعی می‌گوییم ادامه دهد
+                    batch++
+                    agentLogs.add("🔄 سقف مراحل پر شد. ارسال درخواست ادامه (دسته $batch)...")
+                    saveHistory()
+                    history.put(JSONObject().put("role", "user").put("content", "System Limit Reached. Please continue the task from where you left off. Output the next command."))
+                    step = 1 // ریست کردن شمارنده
+                }
+
+                agentLogs.add("🤖 در حال فکر کردن (دسته $batch - مرحله $step)...")
                 saveHistory()
                 
                 val aiResponse = aiAgent.runAgentStep(apiKey, history)
@@ -299,15 +304,14 @@ fun TerminalScreen() {
                 history.put(JSONObject().put("role", "user").put("content", "The command output was:\n$output\n\nWhat is the next command? If the task is complete, output TASK_COMPLETE."))
             }
             
-            if (step >= maxSteps) {
-                agentLogs.add("⚠️ به حداکثر تعداد مراحل رسیدیم.")
+            if (!isAiRunning) {
+                agentLogs.add("⏹️ ایجنت متوقف شد.")
                 saveHistory()
             }
             isAiRunning = false
         }
     }
 
-    // 👇 پنجره چت
     if (showAiDialog) {
         AlertDialog(
             onDismissRequest = { if (!isAiRunning) showAiDialog = false },
@@ -447,7 +451,6 @@ fun TerminalScreen() {
     }
 }
 
-// توابع کمکی
 fun cleanAnsi(text: String): String {
     var cleaned = text.replace(Regex("""\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])"""), "")
     cleaned = cleaned.replace(Regex("""\[\d+\s+\d+%"""), "")

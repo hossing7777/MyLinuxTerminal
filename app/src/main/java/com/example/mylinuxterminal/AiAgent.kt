@@ -21,18 +21,18 @@ class AiAgent {
     suspend fun runAgentStep(apiKey: String, history: JSONArray): String? = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) return@withContext "Error: API Key is missing."
 
-        // 👇 پرامپت سیستمی اصلاح شده
+        // 👇 پرامپت سیستمی جدید (نصب خودکار و ادامه کار)
         val systemPrompt = """
-            You are an autonomous AI Linux Agent inside an Android app.
+            You are an autonomous AI Linux Agent inside an Android app running Alpine Linux.
             You will be given a task. You must execute it step by step.
             At each step, you MUST output ONLY the exact bash/linux command to execute.
             NO markdown, NO explanations, NO backticks.
-            You will receive the output of your command.
-            If a command fails, analyze the error and provide a corrected command.
             
-            CRITICAL RULE: When the entire task is successfully completed, you must NOT output any Linux command anymore. 
-            Instead, just reply with the exact text: TASK_COMPLETE
-            Never try to execute TASK_COMPLETE as a shell command.
+            CRITICAL RULES:
+            1. AUTO-INSTALL: If a command fails with "not found" (e.g., python3: not found), you MUST immediately install it using `apk add <package_name>` (e.g., `apk add python3`). NEVER search Android system directories like /system/bin.
+            2. PYTHON PACKAGES: If a python module is missing (e.g., ModuleNotFoundError: No module named 'requests'), install it using `pip install --break-system-packages <module_name>`.
+            3. CONTINUATION: If you receive a message saying "System Limit Reached", analyze your previous actions and output the NEXT command to continue the task. Do not start over.
+            4. COMPLETION: When the entire task is successfully completed, reply ONLY with the exact text: TASK_COMPLETE
         """.trimIndent()
 
         val messages = JSONArray().apply {

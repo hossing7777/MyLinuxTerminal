@@ -306,12 +306,16 @@ fun TerminalScreen() {
                     break
                 }
                 
+                val cmdStartTime = System.currentTimeMillis()
                 agentLogs.add("💻 اجرای دستور: $aiResponse")
                 saveHistory()
                 
                 val output = executeCommandAndWait(aiResponse)
                 
                 val displayOutput = if (output.isBlank()) "(بدون خروجی)" else output
+                val cmdEndTime = System.currentTimeMillis()
+                val duration = (cmdEndTime - cmdStartTime) / 1000
+                agentLogs.add("⏱️ زمان اجرا: ${duration} ثانیه")
                 agentLogs.add("📄 خروجی ترمینال:\n$displayOutput")
                 saveHistory()
                 

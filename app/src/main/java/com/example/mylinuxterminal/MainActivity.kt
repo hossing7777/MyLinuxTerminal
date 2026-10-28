@@ -26,6 +26,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -52,7 +53,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @SuppressLint("SetJavaScriptEnabled")
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun TerminalScreen() {
     val context = LocalContext.current
@@ -86,7 +87,6 @@ fun TerminalScreen() {
 
     fun sendTerminalInput(data: String) {
         ptyProcess.writeData(data)
-        // 👇 برگرداندن فوکوس به WebView و باز نگه داشتن کیبورد
         webViewRef?.evaluateJavascript("window.focusTerminal();", null)
         webViewRef?.requestFocus()
         keyboardController?.show()
@@ -129,7 +129,6 @@ fun TerminalScreen() {
                     if (len > 0) {
                         val text = String(buf, 0, len)
                         
-                        // 👇 ارسال امن با JSONObject
                         withContext(Dispatchers.Main) {
                             val quotedText = JSONObject.quote(text)
                             webViewRef?.evaluateJavascript("window.writeToTerminal($quotedText);", null)
@@ -141,14 +140,16 @@ fun TerminalScreen() {
                             val line = buffer.substring(0, idx)
                             buffer.delete(0, idx + 1)
                             
-                            val match = regex.find(line)
-                            if (match != null && isInstalling) {
-                                val current = match.groupValues[1].toIntOrNull() ?: 0
-                                val total = match.groupValues[2].toIntOrNull() ?: 1
-                                if (total > 0) installProgress = current.toFloat() / total.toFloat()
-                            }
-                            if (line.contains("::DONE::")) {
-                                withContext(Dispatchers.Main) { isInstalling = false }
+                            withContext(Dispatchers.Main) {
+                                val match = regex.find(line)
+                                if (match != null && isInstalling) {
+                                    val current = match.groupValues[1].toIntOrNull() ?: 0
+                                    val total = match.groupValues[2].toIntOrNull() ?: 1
+                                    if (total > 0) installProgress = current.toFloat() / total.toFloat()
+                                }
+                                if (line.contains("::DONE::")) {
+                                    isInstalling = false
+                                }
                             }
                         }
                     } else break
@@ -226,7 +227,6 @@ fun TerminalScreen() {
                             ptyProcess.writeData(data)
                         }
                         
-                        // 👇 وقتی WebView آماده شد، لینوکس را استارت بزن
                         @JavascriptInterface
                         fun onReady() {
                             coroutineScope.launch(Dispatchers.Main) {
@@ -293,7 +293,6 @@ fun TerminalScreen() {
     }
 }
 
-// توابع استخراج
 suspend fun extractLinux(context: Context) = withContext(Dispatchers.IO) {
     val alpineDir = File(context.filesDir, "alpine")
     val assets = context.assets.list("") ?: emptyArray()

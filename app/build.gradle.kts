@@ -33,9 +33,11 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+    
+    // 👇 این خط برای پشتیبانی از آیکون‌های اضافی (مثل آیکون ربات) اضافه شد
+    implementation("androidx.compose.material:material-icons-extended")
+    
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("org.apache.commons:commons-compress:1.26.0")
-    
-    // 👇 فقط OkHttp برای ارتباط با هرمز. (org.json حذف شد چون اندروید خودش دارد)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

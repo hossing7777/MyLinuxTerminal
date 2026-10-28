@@ -195,7 +195,7 @@ fun TerminalScreen() {
                         if (terminalState.isWaitingForCommand) {
                             terminalState.commandOutputBuffer.append(cleanText)
                             if (terminalState.commandOutputBuffer.contains(terminalState.currentMarker)) {
-                                val finalOutput = terminalState.commandOutputBuffer.substringBefore(terminalState.currentMarker).trim()
+                                val finalOutput = terminalState.commandOutputBuffer.toString().substringBefore(terminalState.currentMarker).trim()
                                 terminalState.commandDeferred?.complete(finalOutput)
                                 terminalState.isWaitingForCommand = false
                             }

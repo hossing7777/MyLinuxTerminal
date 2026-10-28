@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -87,8 +88,10 @@ fun TerminalScreen() {
     var isAiLoading by remember { mutableStateOf(false) }
     val aiAgent = remember { AiAgent() }
     
-    // 👇 خواندن کلید API از حافظه
+    // 👇 متغیرهای تنظیمات API
     var apiKey by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
+    var isTesting by remember { mutableStateOf(false) }
+    var testResult by remember { mutableStateOf("") }
     
     val ptyProcess = remember { PtyProcess() }
     var ptyFd by remember { mutableStateOf(-1) }
@@ -234,7 +237,7 @@ fun TerminalScreen() {
             text = {
                 Column {
                     if (apiKey.isBlank()) {
-                        Text("لطفاً ابتدا از منوی تنظیمات (⚙️)، کلید API خود را وارد کنید.", color = Color.Red, fontSize = 14.sp)
+                        Text("لطفاً ابتدا از منوی تنظیمات (⚙️)، کلید API خود را وارد و ذخیره کنید.", color = Color.Red, fontSize = 14.sp)
                     } else {
                         Text("چه کاری برایت انجام دهم؟", color = Color.Gray, fontSize = 12.sp)
                         Spacer(modifier = Modifier.height(8.dp))
@@ -248,6 +251,7 @@ fun TerminalScreen() {
                         
                         if (isAiLoading) {
                             CircularProgressIndicator(color = Color.Cyan)
+                            Text("در حال دریافت پاسخ از هوش مصنوعی...", color = Color.Yellow, fontSize = 10.sp, modifier = Modifier.padding(top = 8.dp))
                         } else if (aiResponse.isNotEmpty()) {
                             Text("دستور پیشنهادی:", color = Color.Yellow, fontSize = 12.sp)
                             Spacer(modifier = Modifier.height(4.dp))
@@ -344,20 +348,59 @@ fun TerminalScreen() {
             title = { Text("Settings") },
             text = {
                 Column {
-                    // 👇 فیلد ورود API Key
                     Text("Hormuz API Key:", color = Color.Cyan)
                     OutlinedTextField(
                         value = apiKey,
-                        onValueChange = { 
-                            apiKey = it 
-                            prefs.edit().putString("api_key", it).apply()
-                        },
+                        onValueChange = { apiKey = it },
                         placeholder = { Text("ng-...") },
                         modifier = Modifier.fillMaxWidth(),
                         visualTransformation = PasswordVisualTransformation(),
                         singleLine = true
                     )
                     
+                    // 👇 دکمه‌های ذخیره و تست
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Button(
+                            onClick = {
+                                prefs.edit().putString("api_key", apiKey).apply()
+                                Toast.makeText(context, "کلید با موفقیت ذخیره شد", Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006600)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("ذخیره کلید")
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                if (apiKey.isBlank()) {
+                                    testResult = "لطفا ابتدا کلید را وارد کنید."
+                                } else {
+                                    isTesting = true
+                                    testResult = ""
+                                    coroutineScope.launch {
+                                        val res = aiAgent.testConnection(apiKey)
+                                        testResult = res
+                                        isTesting = false
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("تست اتصال")
+                        }
+                    }
+                    
+                    if (isTesting) {
+                        Text("در حال تست...", color = Color.Yellow, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                    } else if (testResult.isNotEmpty()) {
+                        Text(testResult, color = if (testResult.contains("✅")) Color.Green else Color.Red, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                    }
+
                     Spacer(modifier = Modifier.height(16.dp))
                     Text("Font Size: ${fontSize.value.toInt()}sp")
                     Slider(value = fontSize.value, onValueChange = { fontSize = it.sp }, valueRange = 8f..36f)

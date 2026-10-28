@@ -8,13 +8,52 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 class AiAgent {
     private val endpoint = "https://api.hormouz.net/v1/chat/completions"
-    private val client = OkHttpClient()
+    
+    // 👇 افزایش زمان انتظار (Timeout) به ۶۰ ثانیه برای جلوگیری از خطای timeout
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .build()
+
+    suspend fun testConnection(apiKey: String): String = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) return@withContext "کلید خالی است."
+
+        val jsonBody = JSONObject().apply {
+            put("model", "nvidia/nemotron-3-ultra-550b-a55b:free")
+            put("messages", JSONArray().apply {
+                put(JSONObject().put("role", "user").put("content", "Say OK"))
+            })
+            put("max_tokens", 10)
+        }
+
+        val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())
+        val request = Request.Builder()
+            .url(endpoint)
+            .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("User-Agent", "Mozilla/5.0")
+            .post(requestBody)
+            .build()
+
+        try {
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    return@withContext "✅ اتصال با موفقیت برقرار شد."
+                } else {
+                    return@withContext "❌ خطای سرور: ${response.code} - ${response.message}"
+                }
+            }
+        } catch (e: IOException) {
+            return@withContext "❌ خطای شبکه: ${e.message}"
+        }
+    }
 
     suspend fun generateCommand(apiKey: String, userPrompt: String): String? = withContext(Dispatchers.IO) {
-        if (apiKey.isBlank()) return@withContext "Error: API Key is missing. Please add it in Settings."
+        if (apiKey.isBlank()) return@withContext "Error: API Key is missing."
 
         val systemPrompt = """
             You are an AI Linux Agent inside an Android app.
@@ -39,6 +78,7 @@ class AiAgent {
         val request = Request.Builder()
             .url(endpoint)
             .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("User-Agent", "Mozilla/5.0") // 👈 اضافه کردن User-Agent برای جلوگیری از بلاک شدن
             .post(requestBody)
             .build()
 

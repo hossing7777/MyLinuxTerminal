@@ -57,6 +57,15 @@ import java.nio.file.Files
 import java.nio.file.Paths
 import java.nio.file.attribute.PosixFilePermissions
 
+// 👇 این متغیرها را از حالت State خارج کردیم تا کرش نکنند
+class TerminalState {
+    var isWaitingForCommand = false
+    var currentMarker = ""
+    val commandOutputBuffer = StringBuilder()
+    var commandDeferred: CompletableDeferred<String>? = null
+    var ptyFd = -1
+}
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,12 +78,12 @@ class MainActivity : ComponentActivity() {
 fun TerminalScreen() {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE) }
+    val terminalState = remember { TerminalState() } // استفاده از کلاس کمکی
     
     var isExtracted by remember { mutableStateOf(false) }
     var showPackageDialog by remember { mutableStateOf(false) }
     var isInstalling by remember { mutableStateOf(false) }
     var installProgress by remember { mutableStateOf(0f) }
-    var isTerminalRunning by remember { mutableStateOf(false) }
 
     var inputText by remember { mutableStateOf("") }
     var fontSize by remember { mutableStateOf(14.sp) }
@@ -82,11 +91,11 @@ fun TerminalScreen() {
     var bgColor by remember { mutableStateOf(Color.Black) }
     var showSettings by remember { mutableStateOf(false) }
     
-    // 👇 متغیرهای ایجنت هوشمند
+    // متغیرهای ایجنت
     var showAiDialog by remember { mutableStateOf(false) }
     var aiPrompt by remember { mutableStateOf("") }
     var isAiRunning by remember { mutableStateOf(false) }
-    val agentLogs = remember { mutableStateListOf<String>() } // لاگ‌های نمایش در پنجره چت
+    val agentLogs = remember { mutableStateListOf<String>() }
     
     val aiAgent = remember { AiAgent() }
     var apiKey by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
@@ -94,18 +103,11 @@ fun TerminalScreen() {
     var testResult by remember { mutableStateOf("") }
     
     val ptyProcess = remember { PtyProcess() }
-    var ptyFd by remember { mutableStateOf(-1) }
     val outputLines = remember { mutableStateListOf<String>() }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
-
-    // 👇 ابزارهای ارتباط با PTY برای خواندن خروجی
-    var isWaitingForCommand by remember { mutableStateOf(false) }
-    var currentMarker by remember { mutableStateOf("") }
-    var commandOutputBuffer by remember { mutableStateOf(StringBuilder()) }
-    var commandDeferred by remember { mutableStateOf<CompletableDeferred<String>?>(null) }
 
     val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop")
     val selectedPackages = remember { mutableStateListOf("python3", "git", "nano") }
@@ -132,34 +134,28 @@ fun TerminalScreen() {
     }
 
     fun sendToPty(data: String) {
-        if (ptyFd > 0) ptyProcess.writeData(data)
+        if (terminalState.ptyFd > 0) ptyProcess.writeData(data)
         focusRequester.requestFocus()
         keyboardController?.show()
     }
 
-    // 👇 تابعی که یک دستور را اجرا کرده و منتظر خروجی آن می‌ماند
+    // 👇 تابع اجرای دستور و انتظار برای خروجی
     suspend fun executeCommandAndWait(command: String): String {
         return withContext(Dispatchers.IO) {
             val deferred = CompletableDeferred<String>()
-            commandDeferred = deferred
+            terminalState.commandDeferred = deferred
+            terminalState.currentMarker = "::CMD_DONE_${System.currentTimeMillis()}::"
+            terminalState.commandOutputBuffer.clear()
+            terminalState.isWaitingForCommand = true
             
-            val marker = "::CMD_DONE_${System.currentTimeMillis()}::"
-            currentMarker = marker
-            commandOutputBuffer.clear()
-            isWaitingForCommand = true
+            ptyProcess.writeData("$command 2>&1; echo \"${terminalState.currentMarker}\"\n")
             
-            // ارسال دستور به همراه یک نشانگر مخفی برای فهمیدن پایان کار
-            val fullCommand = "$command 2>&1; echo \"$marker\"\n"
-            ptyProcess.writeData(fullCommand)
-            
-            // منتظر می‌مانیم تا خواننده PTY، مارکر را ببیند و deferred را کامل کند
             deferred.await()
         }
     }
 
     fun startTerminal(packagesToInstall: List<String> = emptyList()) {
-        if (isTerminalRunning) return
-        isTerminalRunning = true
+        if (terminalState.ptyFd > 0) return
 
         coroutineScope.launch(Dispatchers.IO) {
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
@@ -181,16 +177,13 @@ fun TerminalScreen() {
             """.trimIndent())
             scriptFile.setExecutable(true)
 
-            withContext(Dispatchers.Main) { 
-                outputLines.clear()
-                outputLines.add("Starting terminal engine...")
-            }
+            withContext(Dispatchers.Main) { outputLines.clear() }
 
-            ptyFd = ptyProcess.createPty(
+            terminalState.ptyFd = ptyProcess.createPty(
                 scriptFile.absolutePath, prootPath, alpinePath, tmpDir, loaderPath, nativeLibDir, context.filesDir.absolutePath
             )
             
-            if (ptyFd > 0) {
+            if (terminalState.ptyFd > 0) {
                 val buf = ByteArray(4096)
                 while (true) {
                     val len = ptyProcess.readData(buf)
@@ -198,23 +191,20 @@ fun TerminalScreen() {
                         val text = String(buf, 0, len)
                         val cleanText = cleanAnsi(text)
 
-                        // اگر منتظر خروجی یک دستور ایجنت هستیم
-                        if (isWaitingForCommand) {
-                            commandOutputBuffer.append(cleanText)
-                            if (commandOutputBuffer.contains(currentMarker)) {
-                                val finalOutput = commandOutputBuffer.substringBefore(currentMarker).trim()
-                                commandDeferred?.complete(finalOutput)
-                                isWaitingForCommand = false
+                        // پردازش خروجی برای ایجنت
+                        if (terminalState.isWaitingForCommand) {
+                            terminalState.commandOutputBuffer.append(cleanText)
+                            if (terminalState.commandOutputBuffer.contains(terminalState.currentMarker)) {
+                                val finalOutput = terminalState.commandOutputBuffer.substringBefore(terminalState.currentMarker).trim()
+                                terminalState.commandDeferred?.complete(finalOutput)
+                                terminalState.isWaitingForCommand = false
                             }
                         }
 
                         // آپدیت UI
                         withContext(Dispatchers.Main) {
-                            if (cleanText.contains("::SETUP_DONE::")) {
-                                isInstalling = false
-                                installProgress = 1f
-                            }
-                            // افزودن به خطوط ترمینال
+                            if (cleanText.contains("::SETUP_DONE::")) isInstalling = false
+                            
                             val lines = cleanText.split("\n")
                             for (line in lines) {
                                 if (line.isNotBlank() && !line.contains("::CMD_DONE_") && !line.contains("::SETUP_DONE::")) {
@@ -240,7 +230,6 @@ fun TerminalScreen() {
         checkStoragePermission()
     }
 
-    // 👇 تابع اصلی اجرای ایجنت
     fun runAgent(userRequest: String) {
         isAiRunning = true
         agentLogs.clear()
@@ -251,7 +240,7 @@ fun TerminalScreen() {
             history.put(JSONObject().put("role", "user").put("content", userRequest))
             
             var step = 0
-            val maxSteps = 8 // حداکثر تعداد دستورات متوالی برای جلوگیری از حلقه بی‌پایان
+            val maxSteps = 8
             
             while (step < maxSteps && isAiRunning) {
                 step++
@@ -260,7 +249,7 @@ fun TerminalScreen() {
                 val aiResponse = aiAgent.runAgentStep(apiKey, history)
                 
                 if (aiResponse == null || aiResponse.startsWith("Error")) {
-                    agentLogs.add("❌ خطا در ارتباط با هوش مصنوعی: $aiResponse")
+                    agentLogs.add("❌ خطا در ارتباط: $aiResponse")
                     break
                 }
                 
@@ -271,25 +260,21 @@ fun TerminalScreen() {
                 
                 agentLogs.add("💻 اجرای دستور: $aiResponse")
                 
-                // اجرای دستور در ترمینال و گرفتن خروجی
+                // 👇 اجرای دستور و گرفتن خروجی به صورت امن
                 val output = executeCommandAndWait(aiResponse)
                 
                 val displayOutput = if (output.isBlank()) "(بدون خروجی)" else output
                 agentLogs.add("📄 خروجی ترمینال:\n$displayOutput")
                 
-                // اضافه کردن نتیجه به تاریخچه برای مرحله بعد
                 history.put(JSONObject().put("role", "assistant").put("content", aiResponse))
                 history.put(JSONObject().put("role", "user").put("content", "The command output was:\n$output\n\nWhat is the next command? If the task is complete, output TASK_COMPLETE."))
             }
             
-            if (step >= maxSteps) {
-                agentLogs.add("⚠️ به حداکثر تعداد مراحل رسیدیم. عملیات متوقف شد.")
-            }
+            if (step >= maxSteps) agentLogs.add("⚠️ به حداکثر تعداد مراحل رسیدیم.")
             isAiRunning = false
         }
     }
 
-    // 👇 پنجره چت
     if (showAiDialog) {
         AlertDialog(
             onDismissRequest = { if (!isAiRunning) showAiDialog = false },
@@ -318,7 +303,6 @@ fun TerminalScreen() {
                         Spacer(modifier = Modifier.height(16.dp))
                         Text("گزارش زنده عملیات:", color = Color.Yellow, fontSize = 12.sp)
                         
-                        // نمایش لاگ‌های ایجنت
                         LazyColumn(modifier = Modifier.height(250.dp).fillMaxWidth().background(Color(0xFF1E1E1E))) {
                             items(agentLogs) { log ->
                                 Text(log, color = Color.LightGray, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(4.dp))
@@ -333,7 +317,6 @@ fun TerminalScreen() {
         )
     }
 
-    // (بقیه کدهای UI مثل قبل برای PackageDialog، Settings، Terminal Screen و ...)
     if (showPackageDialog) {
         AlertDialog(
             onDismissRequest = { },
@@ -389,7 +372,6 @@ fun TerminalScreen() {
             items(outputLines) { line -> SelectionContainer { Text(text = line, color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize) } }
         }
         
-        // Helper Keys Bar (CTRL, ESC, etc)
         Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             if (isCtrlPressed) {
                 listOf("C" to "\u0003", "D" to "\u0004").forEach { (l, c) -> Button(onClick = { sendToPty(c); isCtrlPressed = false }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red), modifier = Modifier.height(32.dp)) { Text(l, fontSize = 10.sp) } }
@@ -414,7 +396,7 @@ fun TerminalScreen() {
     }
 }
 
-// (توابع extractLinux, fixAlpineStructure, extractTarSmart, cleanAnsi بدون تغییر)
+// توابع کمکی (بدون تغییر)
 fun cleanAnsi(text: String): String {
     var cleaned = text.replace(Regex("""\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])"""), "")
     cleaned = cleaned.replace(Regex("""\[\d+\s+\d+%"""), "")

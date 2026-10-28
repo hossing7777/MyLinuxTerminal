@@ -32,7 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Face
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -335,7 +335,7 @@ fun TerminalScreen() {
             shape = RoundedCornerShape(16.dp),
             title = { 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.SmartToy, contentDescription = "AI", tint = Color.Cyan, modifier = Modifier.size(28.dp))
+                    Icon(Icons.Default.Face, contentDescription = "AI", tint = Color.Cyan, modifier = Modifier.size(28.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("AI Autonomous Agent", color = Color.Cyan, fontWeight = FontWeight.Bold)
                 }
@@ -479,7 +479,7 @@ fun TerminalScreen() {
                 onClick = { showAiDialog = true },
                 containerColor = Color(0xFF6200EE),
                 contentColor = Color.White,
-                icon = { Icon(Icons.Default.SmartToy, contentDescription = "AI") },
+                icon = { Icon(Icons.Default.Face, contentDescription = "AI") },
                 text = { Text("AI Agent") }
             )
         }

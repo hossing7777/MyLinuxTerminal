@@ -77,7 +77,6 @@ fun TerminalScreen() {
     var bgColor by remember { mutableStateOf(Color.Black) }
     var showSettings by remember { mutableStateOf(false) }
     
-    var shellProcess by remember { mutableStateOf<Process?>(null) }
     var shellWriter by remember { mutableStateOf<BufferedWriter?>(null) }
     
     val outputLines = remember { mutableStateListOf<String>() }
@@ -89,6 +88,9 @@ fun TerminalScreen() {
     val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop")
     val selectedPackages = remember { mutableStateListOf("python3", "git", "nano") }
     var isCtrlPressed by remember { mutableStateOf(false) }
+    
+    // 👇 فایل مخفی برای تشخیص نصب اولیه
+    val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
 
     val manageStorageLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -112,6 +114,23 @@ fun TerminalScreen() {
         outputLines.add("--- Copied ---")
     }
 
+    // 👇 تابع ریست کردن برنامه (برای تست مجدد)
+    fun resetApp() {
+        coroutineScope.launch(Dispatchers.IO) {
+            val alpineDir = File(context.filesDir, "alpine")
+            alpineDir.deleteRecursively()
+            withContext(Dispatchers.Main) {
+                outputLines.clear()
+                outputLines.add("App data cleared. Restarting...")
+                isExtracted = false
+                isTerminalRunning = false
+                showSettings = false
+                // فراخوانی مجدد تابع استخراج
+                coroutineScope.launch { extractLinux(context, outputLines) }
+            }
+        }
+    }
+
     fun startTerminal(packagesToInstall: List<String> = emptyList()) {
         if (isTerminalRunning) return
         isTerminalRunning = true
@@ -121,13 +140,12 @@ fun TerminalScreen() {
             val prootPath = File(nativeLibDir, "libproot.so").absolutePath
             val loaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
             val alpinePath = File(context.filesDir, "alpine").absolutePath
-            
-            // استفاده از cacheDir برای پوشه موقت (بسیار مهم برای سامسونگ)
             val tmpDir = File(context.cacheDir, "proot_tmp").absolutePath
             File(tmpDir).mkdirs()
             
-            val initialCmd = if (packagesToInstall.isNotEmpty()) {
-                "apk update && apk add ${packagesToInstall.joinToString(" ")} && echo '::DONE::'"
+            // 👇 منطق نصب هوشمند
+            val initialCmd = if (!setupDoneFile.exists() && packagesToInstall.isNotEmpty()) {
+                "apk update && apk add ${packagesToInstall.joinToString(" ")} && touch /data/data/com.example.mylinuxterminal/files/alpine/.setup_done && echo '::DONE::'"
             } else {
                 "echo '::DONE::'"
             }
@@ -143,16 +161,14 @@ fun TerminalScreen() {
                 env["PROOT_TMP_DIR"] = tmpDir
                 env["PROOT_NO_SECCOMP"] = "1"
                 env["PROOT_LOADER"] = loaderPath
-                env["LD_LIBRARY_PATH"] = nativeLibDir // مسیر پیدا کردن libtalloc
+                env["LD_LIBRARY_PATH"] = nativeLibDir
                 env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
                 env["HOME"] = "/root"
                 env["TERM"] = "xterm-256color"
 
                 pb.redirectErrorStream(true)
                 val process = pb.start()
-                shellProcess = process
-                val writer = BufferedWriter(OutputStreamWriter(process.outputStream))
-                shellWriter = writer
+                shellWriter = BufferedWriter(OutputStreamWriter(process.outputStream))
 
                 withContext(Dispatchers.Main) { 
                     outputLines.clear()
@@ -165,12 +181,11 @@ fun TerminalScreen() {
                 var line = reader.readLine()
                 while (line != null) {
                     val currentLine = line
-                    
                     withContext(Dispatchers.Main) {
                         if (currentLine.contains("::DONE::")) {
                             isInstalling = false
                             installProgress = 1f
-                            installStatus = "Done! You are now in Alpine Linux."
+                            installStatus = "Ready!"
                         } else {
                             val match = regex.find(currentLine)
                             if (match != null && isInstalling) {
@@ -179,7 +194,6 @@ fun TerminalScreen() {
                                 if (total > 0) installProgress = current.toFloat() / total.toFloat()
                                 installStatus = "Installing ($current/$total)..."
                             }
-                            
                             if (currentLine.isNotBlank()) {
                                 outputLines.add(currentLine)
                                 listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
@@ -188,49 +202,35 @@ fun TerminalScreen() {
                     }
                     line = reader.readLine()
                 }
-                
                 withContext(Dispatchers.Main) {
                     outputLines.add("Terminal process ended.")
                     isTerminalRunning = false
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    outputLines.add("Error starting terminal: ${e.message}")
+                    outputLines.add("Error: ${e.message}")
                     isTerminalRunning = false
                 }
             }
         }
     }
 
-    suspend fun extractLinux() = withContext(Dispatchers.IO) {
-        val alpineDir = File(context.filesDir, "alpine")
-        val assets = context.assets.list("") ?: emptyArray()
-        val assetName = if (assets.contains("alpine.tar.gz")) "alpine.tar.gz" else "alpine.tar"
-
-        if (!alpineDir.exists() || alpineDir.listFiles()?.isEmpty() == true) {
-            try {
-                alpineDir.mkdirs()
-                context.assets.open(assetName).use { input -> extractTarSmart(input, alpineDir) }
-                withContext(Dispatchers.Main) { outputLines.add("Extraction successful!") }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) { outputLines.add("Extract Error: ${e.toString()}") }
-            }
-        }
-        fixAlpineStructure(alpineDir)
-
-        withContext(Dispatchers.Main) {
-            isExtracted = true
+    LaunchedEffect(Unit) { 
+        extractLinux(context, outputLines)
+        isExtracted = true
+        // اگر قبلا نصب شده، مستقیم برو به ترمینال
+        if (setupDoneFile.exists()) {
+            startTerminal(emptyList())
+        } else {
             showPackageDialog = true
-            checkStoragePermission()
         }
+        checkStoragePermission()
     }
-
-    LaunchedEffect(Unit) { extractLinux() }
 
     if (showPackageDialog) {
         AlertDialog(
             onDismissRequest = { },
-            title = { Text("Select Packages to Install") },
+            title = { Text("Select Packages (First Run)") },
             text = {
                 LazyColumn {
                     items(availablePackages) { pkg ->
@@ -254,17 +254,13 @@ fun TerminalScreen() {
                     showPackageDialog = false
                     isInstalling = true
                     startTerminal(selectedPackages.toList()) 
-                }) {
-                    Text("Install & Start")
-                }
+                }) { Text("Install & Start") }
             },
             dismissButton = {
                 TextButton(onClick = {
                     showPackageDialog = false
                     startTerminal(emptyList())
-                }) {
-                    Text("Skip")
-                }
+                }) { Text("Skip") }
             }
         )
     }
@@ -285,15 +281,19 @@ fun TerminalScreen() {
                         Button(onClick = { textColor = Color.Yellow }) { Text("Yellow") }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Background Color:")
+                    Text("Background:")
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Button(onClick = { bgColor = Color.Black }) { Text("Black") }
                         Button(onClick = { bgColor = Color(0xFF1A1A1A) }) { Text("Dark") }
                         Button(onClick = { bgColor = Color(0xFF001F3F) }) { Text("Navy") }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
-                    Button(onClick = { showSettings = false; showPackageDialog = true }) {
-                        Text("Manage Packages")
+                    // 👇 دکمه ریست
+                    Button(
+                        onClick = { resetApp() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                    ) {
+                        Text("Reset App (Reinstall)")
                     }
                 }
             },
@@ -306,9 +306,7 @@ fun TerminalScreen() {
         try {
             shellWriter?.write(cmd + "\n")
             shellWriter?.flush()
-        } catch (e: Exception) {
-            outputLines.add("Write Error: ${e.message}")
-        }
+        } catch (e: Exception) { outputLines.add("Write Error: ${e.message}") }
     }
 
     Column(modifier = Modifier.fillMaxSize().background(bgColor).padding(8.dp)) {
@@ -345,6 +343,7 @@ fun TerminalScreen() {
             }
         }
         
+        // 👇 دکمه‌های کمکی با طراحی بهتر
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -356,17 +355,16 @@ fun TerminalScreen() {
                 "ESC" to "\u001b", "TAB" to "\t", "/" to "/", "-" to "-",
                 "UP" to "\u001b[A", "DOWN" to "\u001b[B", "LEFT" to "\u001b[D", "RIGHT" to "\u001b[C"
             )
-            
             keys.forEach { (label, code) ->
                 Button(
                     onClick = { sendCommand(code); focusRequester.requestFocus() },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                    modifier = Modifier.height(32.dp)
+                    modifier = Modifier.height(32.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))
                 ) {
                     Text(text = label, color = Color.White, fontSize = 10.sp)
                 }
             }
-
             Button(
                 onClick = { isCtrlPressed = !isCtrlPressed },
                 colors = ButtonDefaults.buttonColors(
@@ -374,9 +372,7 @@ fun TerminalScreen() {
                 ),
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                 modifier = Modifier.height(32.dp)
-            ) {
-                Text(text = "CTRL", color = Color.White, fontSize = 10.sp)
-            }
+            ) { Text(text = "CTRL", color = Color.White, fontSize = 10.sp) }
         }
 
         Row(modifier = Modifier.fillMaxWidth()) {
@@ -410,6 +406,24 @@ fun TerminalScreen() {
             )
         }
     }
+}
+
+// توابع کمکی خارج از Composable
+suspend fun extractLinux(context: Context, outputLines: MutableList<String>) = withContext(Dispatchers.IO) {
+    val alpineDir = File(context.filesDir, "alpine")
+    val assets = context.assets.list("") ?: emptyArray()
+    val assetName = if (assets.contains("alpine.tar.gz")) "alpine.tar.gz" else "alpine.tar"
+
+    if (!alpineDir.exists() || alpineDir.listFiles()?.isEmpty() == true) {
+        try {
+            alpineDir.mkdirs()
+            context.assets.open(assetName).use { input -> extractTarSmart(input, alpineDir) }
+            withContext(Dispatchers.Main) { outputLines.add("Extraction successful!") }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) { outputLines.add("Extract Error: ${e.toString()}") }
+        }
+    }
+    fixAlpineStructure(alpineDir)
 }
 
 fun fixAlpineStructure(alpineDir: File) {

@@ -16,7 +16,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -32,7 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,7 +40,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
@@ -51,11 +49,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
@@ -94,8 +88,8 @@ fun TerminalScreen() {
 
     var inputText by remember { mutableStateOf("") }
     var fontSize by remember { mutableStateOf(14.sp) }
-    var textColor by remember { mutableStateOf(Color(0xFF00FF00)) } // Neon Green
-    var bgColor by remember { mutableStateOf(Color(0xFF121212)) } // Dark Background
+    var textColor by remember { mutableStateOf(Color(0xFF00FF00)) }
+    var bgColor by remember { mutableStateOf(Color(0xFF121212)) }
     var showSettings by remember { mutableStateOf(false) }
     
     var showAiDialog by remember { mutableStateOf(false) }
@@ -112,6 +106,9 @@ fun TerminalScreen() {
         } catch (e: Exception) {}
         logs
     }
+    
+    // حافظه بلندمدت
+    var longTermMemory by remember { mutableStateOf(prefs.getString("lt_memory", "No successful commands yet.") ?: "") }
     
     val aiAgent = remember { AiAgent() }
     var apiKey by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
@@ -141,6 +138,13 @@ fun TerminalScreen() {
         prefs.edit().putString("agent_logs", arr.toString()).apply()
     }
 
+    fun updateMemory(cmd: String) {
+        if (!longTermMemory.contains(cmd)) {
+            longTermMemory += "\n- $cmd"
+            prefs.edit().putString("lt_memory", longTermMemory).apply()
+        }
+    }
+
     fun checkStoragePermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
             val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
@@ -155,12 +159,10 @@ fun TerminalScreen() {
         Toast.makeText(context, "متن کپی شد", Toast.LENGTH_SHORT).show()
     }
 
-    // 👇 تابع بستن تمام پروسه‌های پس‌زمینه (پایتون و نود)
     fun killProcesses() {
         if (terminalState.ptyFd > 0) {
-            // killall دستور استاندارد بستن پروسه‌هاست
-            ptyProcess.writeData("killall -9 python3 node 2>/dev/null\n")
-            outputLines.add("🛑 تمام پروسه‌های پس‌زمینه (Python/Node) بسته شدند.")
+            ptyProcess.writeData("killall -9 python3 node zip 2>/dev/null\n")
+            outputLines.add("🛑 تمام پروسه‌های پس‌زمینه بسته شدند.")
         }
     }
 
@@ -170,6 +172,7 @@ fun TerminalScreen() {
         keyboardController?.show()
     }
 
+    // 👇 تایم‌اوت 45 ثانیه‌ای برای دستورات
     suspend fun executeCommandAndWait(command: String): String {
         return withContext(Dispatchers.IO) {
             val deferred = CompletableDeferred<String>()
@@ -180,7 +183,15 @@ fun TerminalScreen() {
             
             ptyProcess.writeData("stty -echo; $command 2>&1; echo \"${terminalState.currentMarker}\"; stty echo\n")
             
-            deferred.await()
+            try {
+                withTimeout(45000) { // 45 ثانیه
+                    deferred.await()
+                }
+            } catch (e: TimeoutCancellationException) {
+                terminalState.isWaitingForCommand = false
+                ptyProcess.writeData("\u0003") // ارسال Ctrl+C برای توقف دستور
+                "Command Timed Out after 45 seconds. It was too slow. Please try a faster method or mirror."
+            }
         }
     }
 
@@ -276,23 +287,21 @@ fun TerminalScreen() {
             history.put(JSONObject().put("role", "user").put("content", userRequest))
             
             var step = 0
-            var batch = 1
             val maxStepsPerBatch = 8
             
             while (isAiRunning) {
                 step++
                 if (step > maxStepsPerBatch) {
-                    batch++
-                    agentLogs.add("🔄 سقف مراحل پر شد. ارسال درخواست ادامه (دسته $batch)...")
+                    agentLogs.add("🔄 سقف مراحل پر شد. ارسال درخواست ادامه...")
                     saveHistory()
                     history.put(JSONObject().put("role", "user").put("content", "System Limit Reached. Please continue the task from where you left off. Output the next command."))
                     step = 1
                 }
 
-                agentLogs.add("🤖 در حال فکر کردن (دسته $batch - مرحله $step)...")
+                agentLogs.add("🤖 در حال فکر کردن (مرحله $step)...")
                 saveHistory()
                 
-                val aiResponse = aiAgent.runAgentStep(apiKey, history)
+                val aiResponse = aiAgent.runAgentStep(apiKey, history, longTermMemory)
                 
                 if (aiResponse == null || aiResponse.startsWith("Error")) {
                     agentLogs.add("❌ خطا در ارتباط: $aiResponse")
@@ -305,33 +314,35 @@ fun TerminalScreen() {
                     saveHistory()
                     break
                 }
+
+                if (aiResponse.startsWith("{") && aiResponse.contains("plan")) {
+                    agentLogs.add("🗺️ نقشه راه تولید شد:\n$aiResponse")
+                    history.put(JSONObject().put("role", "assistant").put("content", aiResponse))
+                    history.put(JSONObject().put("role", "user").put("content", "Plan received. Start executing step 1."))
+                    saveHistory()
+                    continue
+                }
                 
-                val cmdStartTime = System.currentTimeMillis()
                 agentLogs.add("💻 اجرای دستور: $aiResponse")
                 saveHistory()
                 
                 val output = executeCommandAndWait(aiResponse)
                 
+                if (!output.contains("Timed Out")) {
+                    updateMemory(aiResponse)
+                }
+
                 val displayOutput = if (output.isBlank()) "(بدون خروجی)" else output
-                val cmdEndTime = System.currentTimeMillis()
-                val duration = (cmdEndTime - cmdStartTime) / 1000
-                agentLogs.add("⏱️ زمان اجرا: ${duration} ثانیه")
                 agentLogs.add("📄 خروجی ترمینال:\n$displayOutput")
                 saveHistory()
                 
                 history.put(JSONObject().put("role", "assistant").put("content", aiResponse))
                 history.put(JSONObject().put("role", "user").put("content", "The command output was:\n$output\n\nWhat is the next command? If the task is complete, output TASK_COMPLETE."))
             }
-            
-            if (!isAiRunning) {
-                agentLogs.add("⏹️ ایجنت متوقف شد.")
-                saveHistory()
-            }
             isAiRunning = false
         }
     }
 
-    // 👇 پنجره چت هوش مصنوعی (طراحی زیباتر)
     if (showAiDialog) {
         AlertDialog(
             onDismissRequest = { if (!isAiRunning) showAiDialog = false },
@@ -339,74 +350,44 @@ fun TerminalScreen() {
             shape = RoundedCornerShape(16.dp),
             title = { 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Face, contentDescription = "AI", tint = Color.Cyan, modifier = Modifier.size(28.dp))
+                    Icon(Icons.Default.SmartToy, contentDescription = "AI", tint = Color.Cyan, modifier = Modifier.size(28.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("AI Autonomous Agent", color = Color.Cyan, fontWeight = FontWeight.Bold)
+                    Text("AI Agent", color = Color.Cyan, fontWeight = FontWeight.Bold)
                 }
             },
             text = {
                 Column {
-                    if (apiKey.isBlank()) {
-                        Text("لطفاً ابتدا از تنظیمات (⚙️)، کلید API را وارد کنید.", color = Color.Red)
+                    if (!isAiRunning) {
+                        OutlinedTextField(
+                            value = aiPrompt,
+                            onValueChange = { aiPrompt = it },
+                            placeholder = { Text("درخواست خود را بنویسید...", color = Color.Gray) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))
+                        ) { Text("شروع", fontSize = 16.sp) }
                     } else {
-                        if (!isAiRunning) {
-                            OutlinedTextField(
-                                value = aiPrompt,
-                                onValueChange = { aiPrompt = it },
-                                placeholder = { Text("درخواست خود را اینجا بنویسید...", color = Color.Gray) },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedTextColor = Color.White,
-                                    unfocusedTextColor = Color.White,
-                                    focusedBorderColor = Color.Cyan,
-                                    unfocusedBorderColor = Color.Gray
-                                )
-                            )
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Button(
-                                onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) },
-                                modifier = Modifier.fillMaxWidth().height(48.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)),
-                                shape = RoundedCornerShape(12.dp)
-                            ) { Text("شروع عملیات (Start)", fontSize = 16.sp) }
-                        } else {
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.Cyan, strokeWidth = 3.dp)
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Text("در حال پردازش...", color = Color.Yellow)
-                                }
-                                Button(
-                                    onClick = { stopAgent() },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
-                                    shape = RoundedCornerShape(8.dp)
-                                ) { Text("STOP", fontWeight = FontWeight.Bold) }
-                            }
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.Cyan, strokeWidth = 3.dp)
+                            Button(onClick = { stopAgent() }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) { Text("STOP") }
                         }
-                        
-                        Spacer(modifier = Modifier.height(20.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(), 
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("گزارش زنده (Live Logs):", color = Color.LightGray, fontSize = 12.sp)
-                            TextButton(onClick = { agentLogs.clear(); saveHistory() }) {
-                                Text("پاک کردن", color = Color(0xFFFF5252), fontSize = 12.sp)
-                            }
-                        }
-                        
-                        LazyColumn(modifier = Modifier.height(220.dp).fillMaxWidth().background(Color(0xFF000000), RoundedCornerShape(8.dp)).padding(8.dp)) {
-                            items(agentLogs) { log ->
-                                Text(log, color = Color(0xFF00FF00), fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(bottom = 4.dp))
-                            }
-                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("گزارش زنده:", color = Color.LightGray, fontSize = 12.sp)
+                        TextButton(onClick = { agentLogs.clear(); saveHistory() }) { Text("پاک کردن", color = Color.Red, fontSize = 12.sp) }
+                    }
+                    LazyColumn(modifier = Modifier.height(220.dp).fillMaxWidth().background(Color.Black, RoundedCornerShape(8.dp)).padding(8.dp)) {
+                        items(agentLogs) { log -> Text(log, color = Color(0xFF00FF00), fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(bottom = 4.dp)) }
                     }
                 }
             },
-            confirmButton = {
-                if (!isAiRunning) TextButton(onClick = { showAiDialog = false }) { Text("بستن", color = Color.Cyan) }
-            }
+            confirmButton = { if (!isAiRunning) TextButton(onClick = { showAiDialog = false }) { Text("بستن", color = Color.Cyan) } }
         )
     }
 
@@ -424,7 +405,7 @@ fun TerminalScreen() {
                     }
                 }
             },
-            confirmButton = { Button(onClick = { showPackageDialog = false; isInstalling = true; startTerminal(selectedPackages.toList()) }) { Text("Install & Start") } },
+            confirmButton = { Button(onClick = { showPackageDialog = false; isInstalling = true; startTerminal(selectedPackages.toList()) }) { Text("Install") } },
             dismissButton = { TextButton(onClick = { showPackageDialog = false; startTerminal(emptyList()) }) { Text("Skip") } }
         )
     }
@@ -436,14 +417,7 @@ fun TerminalScreen() {
             text = {
                 Column {
                     Text("Hormuz API Key:", color = Color.Cyan)
-                    OutlinedTextField(
-                        value = apiKey, 
-                        onValueChange = { apiKey = it }, 
-                        placeholder = { Text("ng-...") }, 
-                        modifier = Modifier.fillMaxWidth(), 
-                        visualTransformation = PasswordVisualTransformation(), 
-                        singleLine = true
-                    )
+                    OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, placeholder = { Text("ng-...") }, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation(), singleLine = true)
                     Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Button(onClick = { prefs.edit().putString("api_key", apiKey).apply(); Toast.makeText(context, "ذخیره شد", Toast.LENGTH_SHORT).show() }, modifier = Modifier.weight(1f)) { Text("ذخیره") }
                         Spacer(modifier = Modifier.width(8.dp))
@@ -457,7 +431,6 @@ fun TerminalScreen() {
         )
     }
 
-    // 👇 Scaffold استاندارد متریال ۳ (نوار بالا و دکمه شناور)
     Scaffold(
         containerColor = bgColor,
         topBar = {
@@ -465,16 +438,9 @@ fun TerminalScreen() {
                 title = { Text("HguTerminal", color = Color.Cyan, fontWeight = FontWeight.Bold) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF1E1E1E)),
                 actions = {
-                    IconButton(onClick = { copyAllText() }) {
-                        Icon(Icons.Default.Share, contentDescription = "Copy", tint = Color.White)
-                    }
-                    // 👇 دکمه بستن پروسه‌ها
-                    IconButton(onClick = { killProcesses() }) {
-                        Icon(Icons.Default.Close, contentDescription = "Kill Processes", tint = Color(0xFFFF5252))
-                    }
-                    IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White)
-                    }
+                    IconButton(onClick = { copyAllText() }) { Icon(Icons.Default.Share, contentDescription = "Copy", tint = Color.White) }
+                    IconButton(onClick = { killProcesses() }) { Icon(Icons.Default.Close, contentDescription = "Kill", tint = Color(0xFFFF5252)) }
+                    IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White) }
                 }
             )
         },
@@ -483,29 +449,18 @@ fun TerminalScreen() {
                 onClick = { showAiDialog = true },
                 containerColor = Color(0xFF6200EE),
                 contentColor = Color.White,
-                icon = { Icon(Icons.Default.Face, contentDescription = "AI") },
+                icon = { Icon(Icons.Default.SmartToy, contentDescription = "AI") },
                 text = { Text("AI Agent") }
             )
         }
     ) { paddingValues ->
         Column(modifier = Modifier.fillMaxSize().padding(paddingValues).padding(8.dp)) {
-            
             LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
-                items(outputLines) { line -> 
-                    SelectionContainer { 
-                        Text(text = line, color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize) 
-                    } 
-                }
+                items(outputLines) { line -> SelectionContainer { Text(text = line, color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize) } }
             }
-            
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 8.dp), 
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
+            Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (isCtrlPressed) {
-                    listOf("C" to "\u0003", "D" to "\u0004").forEach { (l, c) -> 
-                        Button(onClick = { sendToPty(c); isCtrlPressed = false }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red), modifier = Modifier.height(36.dp)) { Text(l, fontSize = 12.sp) } 
-                    }
+                    listOf("C" to "\u0003", "D" to "\u0004").forEach { (l, c) -> Button(onClick = { sendToPty(c); isCtrlPressed = false }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red), modifier = Modifier.height(36.dp)) { Text(l, fontSize = 12.sp) } }
                 } else {
                     Button(onClick = { isCtrlPressed = true }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)), modifier = Modifier.height(36.dp)) { Text("CTRL", fontSize = 12.sp) }
                     listOf("ESC" to "\u001b", "TAB" to "\t", "/" to "/", "-" to "-", "UP" to "\u001b[A", "DOWN" to "\u001b[B").forEach { (l, c) ->
@@ -513,7 +468,6 @@ fun TerminalScreen() {
                     }
                 }
             }
-
             Row(modifier = Modifier.fillMaxWidth().background(Color(0xFF1E1E1E), RoundedCornerShape(8.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(text = "$ ", color = Color.Cyan, fontFamily = FontFamily.Monospace, fontSize = fontSize, fontWeight = FontWeight.Bold)
                 BasicTextField(

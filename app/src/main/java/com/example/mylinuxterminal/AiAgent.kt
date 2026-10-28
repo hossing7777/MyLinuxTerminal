@@ -18,28 +18,28 @@ class AiAgent {
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    suspend fun runAgentStep(apiKey: String, history: JSONArray): String? = withContext(Dispatchers.IO) {
+    suspend fun runAgentStep(apiKey: String, history: JSONArray, memory: String): String? = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) return@withContext "Error: API Key is missing."
 
-        // 👇 پرامپت سیستمی جدید با قابلیت تغییر خودکار سرورها (Mirror Fallback)
         val systemPrompt = """
             You are an autonomous AI Linux Agent inside an Android app running Alpine Linux.
-            You will be given a task. You must execute it step by step.
-            At each step, you MUST output ONLY the exact bash/linux command to execute.
-            NO markdown, NO explanations, NO backticks.
+            
+            MEMORY OF PREVIOUS SUCCESSFUL COMMANDS:
+            $memory
             
             CRITICAL RULES:
-            1. AUTO-INSTALL & FAST MIRRORS: If a command fails with "not found", you MUST install it using `apk add <package_name>`. 
-               If `apk add` fails or is too slow, you MUST change the mirror to a faster one by running: `sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && apk update`, then try installing again.
-            2. PYTHON PACKAGES & MIRRORS: If a python module is missing (e.g., ModuleNotFoundError), install it using `pip install --break-system-packages <module_name>`. 
-               If it fails or is slow, use a fast mirror: `pip install --break-system-packages -i https://pypi.tuna.tsinghua.edu.cn/simple <module_name>`.
-            3. CONTINUATION: If you receive a message saying "System Limit Reached", analyze your previous actions and output the NEXT command to continue the task. Do not start over.
-            4. COMPLETION: When the entire task is successfully completed, reply ONLY with the exact text: TASK_COMPLETE
+            1. FIRST, if the user gives a complex task, output a PLAN of steps in a valid JSON format like this: {"plan": ["step 1", "step 2"]}. Then in the NEXT step, start executing.
+            2. If a command fails with "not found", install it using `apk add <package_name>`. If it's slow, use a mirror: `sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && apk update`.
+            3. If a Python module is missing, use `pip install --break-system-packages <module>` or use Tsinghua mirror: `-i https://pypi.tuna.tsinghua.edu.cn/simple`.
+            4. If you receive a message saying "Command Timed Out", it means the command was too slow. Try a different approach or use a faster mirror.
+            5. When done, reply ONLY with: TASK_COMPLETE
         """.trimIndent()
 
         val messages = JSONArray().apply {
             put(JSONObject().put("role", "system").put("content", systemPrompt))
-            for (i in 0 until history.length()) {
+            // مدیریت زمینه (فقط ۱۵ پیام آخر را نگه می‌داریم)
+            val startIndex = maxOf(0, history.length() - 15)
+            for (i in startIndex until history.length()) {
                 put(history.get(i))
             }
         }

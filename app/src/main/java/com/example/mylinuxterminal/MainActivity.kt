@@ -39,6 +39,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +64,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun TerminalScreen() {
     val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE) }
+    
     var isExtracted by remember { mutableStateOf(false) }
     var showPackageDialog by remember { mutableStateOf(false) }
     
@@ -76,6 +79,16 @@ fun TerminalScreen() {
     var textColor by remember { mutableStateOf(Color.Green) }
     var bgColor by remember { mutableStateOf(Color.Black) }
     var showSettings by remember { mutableStateOf(false) }
+    
+    // 👇 متغیرهای هوش مصنوعی
+    var showAiDialog by remember { mutableStateOf(false) }
+    var aiPrompt by remember { mutableStateOf("") }
+    var aiResponse by remember { mutableStateOf("") }
+    var isAiLoading by remember { mutableStateOf(false) }
+    val aiAgent = remember { AiAgent() }
+    
+    // 👇 خواندن کلید API از حافظه
+    var apiKey by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
     
     val ptyProcess = remember { PtyProcess() }
     var ptyFd by remember { mutableStateOf(-1) }
@@ -109,26 +122,10 @@ fun TerminalScreen() {
         outputLines.add("--- Copied ---")
     }
 
-    fun resetApp() {
-        coroutineScope.launch(Dispatchers.IO) {
-            File(context.filesDir, "alpine").deleteRecursively()
-            withContext(Dispatchers.Main) {
-                outputLines.clear()
-                outputLines.add("App data cleared. Restarting...")
-                isExtracted = false
-                isTerminalRunning = false
-                showSettings = false
-                coroutineScope.launch { extractLinux(context, outputLines) }
-            }
-        }
-    }
-
-    // تابع ارسال دستور و حفظ اجباری کیبورد
     fun sendToPty(data: String) {
         if (ptyFd > 0) {
             ptyProcess.writeData(data)
         }
-        // 👇 ترفند باز نگه داشتن کیبورد
         focusRequester.requestFocus()
         keyboardController?.show()
     }
@@ -175,7 +172,6 @@ fun TerminalScreen() {
                     val len = ptyProcess.readData(buf)
                     if (len > 0) {
                         val text = String(buf, 0, len)
-                        // 👇 تابع تمیزکننده قوی‌تر
                         val cleanText = cleanAnsi(text)
 
                         buffer.append(cleanText)
@@ -230,6 +226,80 @@ fun TerminalScreen() {
         checkStoragePermission()
     }
 
+    // 👇 پنجره چت با هوش مصنوعی
+    if (showAiDialog) {
+        AlertDialog(
+            onDismissRequest = { showAiDialog = false },
+            title = { Text("🤖 AI Agent", color = Color.Cyan) },
+            text = {
+                Column {
+                    if (apiKey.isBlank()) {
+                        Text("لطفاً ابتدا از منوی تنظیمات (⚙️)، کلید API خود را وارد کنید.", color = Color.Red, fontSize = 14.sp)
+                    } else {
+                        Text("چه کاری برایت انجام دهم؟", color = Color.Gray, fontSize = 12.sp)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = aiPrompt,
+                            onValueChange = { aiPrompt = it },
+                            placeholder = { Text("مثلاً: لیست فایل‌های پوشه دانلود") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        if (isAiLoading) {
+                            CircularProgressIndicator(color = Color.Cyan)
+                        } else if (aiResponse.isNotEmpty()) {
+                            Text("دستور پیشنهادی:", color = Color.Yellow, fontSize = 12.sp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Surface(color = Color(0xFF222222), shape = MaterialTheme.shapes.small) {
+                                Text(aiResponse, color = Color.Green, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(8.dp))
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(
+                                onClick = {
+                                    sendToPty(aiResponse + "\n")
+                                    showAiDialog = false
+                                    aiPrompt = ""
+                                    aiResponse = ""
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006600))
+                            ) {
+                                Text("اجرا در ترمینال (Run)")
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                if (apiKey.isNotBlank() && !isAiLoading && aiResponse.isEmpty()) {
+                    Button(onClick = {
+                        if (aiPrompt.isNotBlank()) {
+                            isAiLoading = true
+                            coroutineScope.launch {
+                                val cmd = aiAgent.generateCommand(apiKey, aiPrompt)
+                                aiResponse = cmd ?: "خطا در ارتباط با سرور."
+                                isAiLoading = false
+                            }
+                        }
+                    }) {
+                        Text("تولید دستور")
+                    }
+                } else if (aiResponse.isNotEmpty()) {
+                    TextButton(onClick = { 
+                        aiResponse = ""
+                        aiPrompt = "" 
+                    }) {
+                        Text("درخواست جدید")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAiDialog = false }) { Text("بستن") }
+            }
+        )
+    }
+
     if (showPackageDialog) {
         AlertDialog(
             onDismissRequest = { },
@@ -274,8 +344,24 @@ fun TerminalScreen() {
             title = { Text("Settings") },
             text = {
                 Column {
+                    // 👇 فیلد ورود API Key
+                    Text("Hormuz API Key:", color = Color.Cyan)
+                    OutlinedTextField(
+                        value = apiKey,
+                        onValueChange = { 
+                            apiKey = it 
+                            prefs.edit().putString("api_key", it).apply()
+                        },
+                        placeholder = { Text("ng-...") },
+                        modifier = Modifier.fillMaxWidth(),
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
                     Text("Font Size: ${fontSize.value.toInt()}sp")
                     Slider(value = fontSize.value, onValueChange = { fontSize = it.sp }, valueRange = 8f..36f)
+                    
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Text Color:")
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -283,18 +369,6 @@ fun TerminalScreen() {
                         Button(onClick = { textColor = Color.White }) { Text("White") }
                         Button(onClick = { textColor = Color.Yellow }) { Text("Yellow") }
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Background:")
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Button(onClick = { bgColor = Color.Black }) { Text("Black") }
-                        Button(onClick = { bgColor = Color(0xFF1A1A1A) }) { Text("Dark") }
-                        Button(onClick = { bgColor = Color(0xFF001F3F) }) { Text("Navy") }
-                    }
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Button(
-                        onClick = { resetApp() },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
-                    ) { Text("Reset App (Reinstall)") }
                 }
             },
             confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Close") } }
@@ -303,8 +377,18 @@ fun TerminalScreen() {
 
     Column(modifier = Modifier.fillMaxSize().background(bgColor).padding(8.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            TextButton(onClick = { copyAllText() }) { Text("Copy All", color = Color.Cyan, fontSize = 12.sp) }
-            TextButton(onClick = { showSettings = true }) { Text("⚙️ Settings", color = Color.Cyan, fontSize = 12.sp) }
+            Row {
+                TextButton(onClick = { copyAllText() }) { Text("Copy All", color = Color.Cyan, fontSize = 12.sp) }
+                TextButton(onClick = { showSettings = true }) { Text("⚙️", color = Color.Cyan, fontSize = 12.sp) }
+            }
+            Button(
+                onClick = { showAiDialog = true },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Text("🤖 AI Agent", color = Color.White, fontSize = 12.sp)
+            }
         }
 
         if (isInstalling) {
@@ -401,14 +485,10 @@ fun TerminalScreen() {
     }
 }
 
-// 👇 تابع پاکسازی قوی‌تر برای حذف کامل کدهای apk
 fun cleanAnsi(text: String): String {
-    // حذف کدهای ANSI استاندارد
     var cleaned = text.replace(Regex("""\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])"""), "")
-    // حذف کردن کدهای مربوط به نوار پیشرفت apk (مثل [7 0% [8)
     cleaned = cleaned.replace(Regex("""\[\d+\s+\d+%"""), "")
     cleaned = cleaned.replace(Regex("""\[[78]"""), "")
-    // حذف فاصله‌های اضافی
     return cleaned
 }
 

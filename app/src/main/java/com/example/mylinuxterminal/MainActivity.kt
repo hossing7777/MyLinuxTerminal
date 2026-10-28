@@ -30,7 +30,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material3.*
@@ -462,7 +461,7 @@ fun TerminalScreen() {
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF1E1E1E)),
                 actions = {
                     IconButton(onClick = { copyAllText() }) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy", tint = Color.White)
+                        Icon(Icons.Default.Share, contentDescription = "Copy", tint = Color.White)
                     }
                     // 👇 دکمه بستن پروسه‌ها
                     IconButton(onClick = { killProcesses() }) {

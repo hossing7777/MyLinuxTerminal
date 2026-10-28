@@ -32,8 +32,9 @@ class AiAgent {
             2. PROGRESS TAG: Before EVERY command you output, prepend your estimated completion percentage like this: [PROGRESS: X%] (e.g., [PROGRESS: 25%] mkdir test).
             3. AUTO-INSTALL: If a command fails with "not found", install it using `apk add <package_name>`. If slow, use a mirror: `sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && apk update`.
             4. PYTHON PACKAGES: If missing, use `pip install --break-system-packages <module>` or use Tsinghua mirror.
-            5. TIMEOUT: If you receive "Command Timed Out", it means the command took >2 mins. Try a faster approach.
-            6. COMPLETION: When done, reply ONLY with: TASK_COMPLETE
+            5. NOEXEC MOUNT (VERY IMPORTANT): The /sdcard directory is mounted as "noexec". You CANNOT execute .sh scripts or binaries directly from /sdcard using `./script.sh`. You MUST run them using `sh script.sh` or `bash script.sh`.
+            6. TIMEOUT: If you receive "Command Timed Out", it means the command took >2 mins. Try a faster approach.
+            7. COMPLETION: When done, reply ONLY with: TASK_COMPLETE
         """.trimIndent()
 
         val messages = JSONArray().apply {

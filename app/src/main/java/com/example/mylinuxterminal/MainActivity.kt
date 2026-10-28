@@ -110,17 +110,8 @@ fun TerminalScreen() {
         outputLines.add("--- Copied ---")
     }
 
-    // شروع و مدیریت PTY (نسخه جدید)
     fun startTerminal(packagesToInstall: List<String> = emptyList()) {
-        if (ptyFd > 0) {
-            if (packagesToInstall.isNotEmpty()) {
-                coroutineScope.launch(Dispatchers.IO) {
-                    withContext(Dispatchers.Main) { isInstalling = true; installProgress = 0f; installStatus = "Installing packages..." }
-                    ptyProcess.writeData("apk update && apk add ${packagesToInstall.joinToString(" ")}\n")
-                }
-            }
-            return
-        }
+        if (ptyFd > 0) return
 
         coroutineScope.launch(Dispatchers.IO) {
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
@@ -128,20 +119,36 @@ fun TerminalScreen() {
             val loaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
             val alpinePath = File(context.filesDir, "alpine").absolutePath
             val tmpDir = File(alpinePath, "tmp").absolutePath
-
+            
+            val scriptFile = File(context.filesDir, "start.sh")
+            
+            // ساخت دستور نصب و اجرای شل
             val installCmd = if (packagesToInstall.isNotEmpty()) {
                 "apk update && apk add ${packagesToInstall.joinToString(" ")} && echo '::DONE::' ; exec /bin/sh"
             } else {
                 "exec /bin/sh"
             }
+            
+            val finalCmd = installCmd.replace("\"", "\\\"")
+
+            scriptFile.writeText("""
+                export PROOT_TMP_DIR=$tmpDir
+                export PROOT_NO_SECCOMP=1
+                export PROOT_LOADER=$loaderPath
+                export LD_LIBRARY_PATH=$nativeLibDir
+                export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+                export HOME=/root
+                export TERM=xterm-256color
+                exec $prootPath --kill-on-exit --link2symlink --sysvipc -0 -r $alpinePath -w / -b /dev -b /proc -b /sys -b /storage/emulated/0:/sdcard /bin/sh -c "$finalCmd"
+            """.trimIndent())
+            scriptFile.setExecutable(true)
 
             withContext(Dispatchers.Main) { 
                 outputLines.clear()
                 outputLines.add("Starting terminal engine...")
             }
 
-            // فراخوانی تابع جدید C++ با تمام پارامترها
-            ptyFd = ptyProcess.createPty(prootPath, alpinePath, tmpDir, loaderPath, nativeLibDir, installCmd)
+            ptyFd = ptyProcess.createPty("sh ${scriptFile.absolutePath}")
             
             if (ptyFd > 0) {
                 val buf = ByteArray(4096)
@@ -181,7 +188,6 @@ fun TerminalScreen() {
                             }
                         }
                         
-                        // اگر پرامپت آمد، نمایش بده
                         if (buffer.contains("# ") || buffer.contains("$ ")) {
                             withContext(Dispatchers.Main) {
                                 outputLines.add(buffer.toString())
@@ -189,7 +195,18 @@ fun TerminalScreen() {
                                 listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
                             }
                         }
-                    } else if (len < 0) break
+                    } else {
+                        // 👇 خروج از حلقه در صورت اتمام یا خطا
+                        withContext(Dispatchers.Main) { 
+                            outputLines.add("Terminal process ended (Code: $len)") 
+                        }
+                        break 
+                    }
+                }
+            } else {
+                withContext(Dispatchers.Main) { 
+                    outputLines.add("Failed to create PTY. Error code: $ptyFd") 
+                    isInstalling = false
                 }
             }
         }

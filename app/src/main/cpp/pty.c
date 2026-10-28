@@ -5,21 +5,12 @@
 #include <sys/ioctl.h>
 #include <android/log.h>
 #include <string.h>
-#include <sys/wait.h>
 
 int master_fd = -1;
 
 JNIEXPORT jint JNICALL
-Java_com_example_mylinuxterminal_PtyProcess_createPty(JNIEnv *env, jobject thiz, 
-    jstring prootPath, jstring alpinePath, jstring tmpDir, jstring loaderPath, jstring nativeLibDir, jstring installCmd) {
-    
-    const char *c_proot = (*env)->GetStringUTFChars(env, prootPath, 0);
-    const char *c_alpine = (*env)->GetStringUTFChars(env, alpinePath, 0);
-    const char *c_tmp = (*env)->GetStringUTFChars(env, tmpDir, 0);
-    const char *c_loader = (*env)->GetStringUTFChars(env, loaderPath, 0);
-    const char *c_lib = (*env)->GetStringUTFChars(env, nativeLibDir, 0);
-    const char *c_cmd = (*env)->GetStringUTFChars(env, installCmd, 0);
-
+Java_com_example_mylinuxterminal_PtyProcess_createPty(JNIEnv *env, jobject thiz, jstring cmd) {
+    const char *cmd_str = (*env)->GetStringUTFChars(env, cmd, 0);
     master_fd = posix_openpt(O_RDWR | O_NOCTTY);
     if (master_fd == -1) return -1;
     if (grantpt(master_fd) == -1) return -1;
@@ -42,29 +33,11 @@ Java_com_example_mylinuxterminal_PtyProcess_createPty(JNIEnv *env, jobject thiz,
         dup2(slave_fd, 2);
         if (slave_fd > 2) close(slave_fd);
 
-        // تنظیم متغیرهای محیطی برای PRoot
-        setenv("PROOT_TMP_DIR", c_tmp, 1);
-        setenv("PROOT_NO_SECCOMP", "1", 1);
-        setenv("PROOT_LOADER", c_loader, 1);
-        setenv("LD_LIBRARY_PATH", c_lib, 1);
-        setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1);
-        setenv("HOME", "/root", 1);
-        setenv("TERM", "xterm-256color", 1);
-
-        // اجرای PRoot
-        execl(c_proot, "proot", "--kill-on-exit", "--link2symlink", "--sysvipc", "-0",
-              "-r", c_alpine, "-w", "/", "-b", "/dev", "-b", "/proc", "-b", "/sys",
-              "-b", "/storage/emulated/0:/sdcard", "/bin/sh", "-c", c_cmd, NULL);
+        // اجرای امن از طریق شل سیستم اندروید
+        execl("/system/bin/sh", "sh", "-c", cmd_str, NULL);
         _exit(1);
     }
-    
-    (*env)->ReleaseStringUTFChars(env, prootPath, c_proot);
-    (*env)->ReleaseStringUTFChars(env, alpinePath, c_alpine);
-    (*env)->ReleaseStringUTFChars(env, tmpDir, c_tmp);
-    (*env)->ReleaseStringUTFChars(env, loaderPath, c_loader);
-    (*env)->ReleaseStringUTFChars(env, nativeLibDir, c_lib);
-    (*env)->ReleaseStringUTFChars(env, installCmd, c_cmd);
-    
+    (*env)->ReleaseStringUTFChars(env, cmd, cmd_str);
     return master_fd;
 }
 

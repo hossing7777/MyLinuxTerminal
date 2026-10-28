@@ -129,7 +129,7 @@ fun TerminalScreen() {
             
             val finalCmd = installCmd.replace("\"", "\\\"")
 
-            // استفاده مستقیم از PRoot استاتیک بدون نیاز به loader و کتابخانه‌ها
+            // 👇 استفاده ۱۰۰٪ از PRoot استاتیک (بدون LD_LIBRARY_PATH و PROOT_LOADER)
             scriptFile.writeText("""
                 echo "Script started."
                 export PROOT_TMP_DIR=$tmpDir
@@ -138,7 +138,7 @@ fun TerminalScreen() {
                 export HOME=/root
                 export TERM=xterm-256color
                 
-                echo "Executing PRoot..."
+                echo "Executing static PRoot..."
                 $prootPath --kill-on-exit --link2symlink --sysvipc -0 -r $alpinePath -w / -b /dev -b /proc -b /sys -b /storage/emulated/0:/sdcard /bin/sh -c "$finalCmd" 2>&1
                 echo "PRoot exited with code $?"
             """.trimIndent())

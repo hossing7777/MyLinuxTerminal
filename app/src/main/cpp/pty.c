@@ -34,11 +34,7 @@ Java_com_example_mylinuxterminal_PtyProcess_createPty(JNIEnv *env, jobject thiz,
         dup2(slave_fd, 2);
         if (slave_fd > 2) close(slave_fd);
 
-        // اجرای شل سیستم
         execl("/system/bin/sh", "sh", "-c", cmd_str, NULL);
-        
-        // اگر به اینجا رسید یعنی execl شکست خورده است
-        dprintf(2, "C++ EXECL FAILED: %s\n", strerror(errno));
         _exit(1);
     }
     (*env)->ReleaseStringUTFChars(env, cmd, cmd_str);
@@ -49,6 +45,9 @@ JNIEXPORT jint JNICALL
 Java_com_example_mylinuxterminal_PtyProcess_readData(JNIEnv *env, jobject thiz, jbyteArray buffer) {
     jbyte *buf = (*env)->GetByteArrayElements(env, buffer, NULL);
     int len = read(master_fd, buf, (*env)->GetArrayLength(env, buffer));
+    if (len < 0) {
+        __android_log_print(ANDROID_LOG_ERROR, "PTY", "read failed: %s", strerror(errno));
+    }
     (*env)->ReleaseByteArrayElements(env, buffer, buf, 0);
     return len;
 }

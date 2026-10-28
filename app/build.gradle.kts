@@ -20,12 +20,7 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.8" }
-    packaging { 
-        jniLibs { 
-            useLegacyPackaging = true
-            keepDebugSymbols += "**/*.so" 
-        } 
-    }
+    packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += "**/*.so" } }
     androidResources { noCompress += listOf("tar", "gz", "tar.gz") }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
 }
@@ -40,4 +35,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("org.apache.commons:commons-compress:1.26.0")
+    
+    // 👇 فقط OkHttp برای ارتباط با هرمز. (org.json حذف شد چون اندروید خودش دارد)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

@@ -19,22 +19,19 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -67,11 +64,15 @@ fun TerminalScreen() {
     var installProgress by remember { mutableStateOf(0f) }
     var installStatus by remember { mutableStateOf("") }
     
+    // 👇 متغیر برای حالت CTRL
+    var isCtrlPressed by remember { mutableStateOf(false) }
+    
     val ptyProcess = remember { PtyProcess() }
     var ptyFd by remember { mutableStateOf(-1) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
-    val outputLines = remember { mutableStateListOf<String>() } // فقط برای لاگ
+    val outputLines = remember { mutableStateListOf<String>() }
     val coroutineScope = rememberCoroutineScope()
+    val focusRequester = remember { FocusRequester() }
     
     val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop")
     val selectedPackages = remember { mutableStateListOf("python3", "git", "nano") }
@@ -88,6 +89,12 @@ fun TerminalScreen() {
             intent.data = Uri.parse("package:${context.packageName}")
             manageStorageLauncher.launch(intent)
         }
+    }
+
+    // تابع ارسال دستور به PTY و حفظ فوکوس کیبورد
+    fun sendTerminalInput(data: String) {
+        ptyProcess.writeData(data)
+        webViewRef?.evaluateJavascript("term.focus();", null)
     }
 
     fun startTerminal(packagesToInstall: List<String> = emptyList()) {
@@ -127,13 +134,11 @@ fun TerminalScreen() {
                     if (len > 0) {
                         val text = String(buf, 0, len)
                         
-                        // ارسال به WebView (xterm.js)
                         withContext(Dispatchers.Main) {
                             val escapedText = text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
                             webViewRef?.evaluateJavascript("window.writeToTerminal('$escapedText');", null)
                         }
 
-                        // آپدیت وضعیت نصب (Progress Bar)
                         buffer.append(text)
                         while (buffer.contains("\n")) {
                             val idx = buffer.indexOf("\n")
@@ -216,7 +221,7 @@ fun TerminalScreen() {
             )
         }
         
-        // 👇 استفاده از WebView برای رندر ترمینال واقعی
+        // ۱. ترمینال (WebView)
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
@@ -226,7 +231,6 @@ fun TerminalScreen() {
                     settings.loadWithOverviewMode = true
                     webViewClient = WebViewClient()
                     
-                    // پل ارتباطی بین جاوااسکریپت و کاتلین
                     addJavascriptInterface(object {
                         @JavascriptInterface
                         fun postMessage(data: String) {
@@ -240,6 +244,67 @@ fun TerminalScreen() {
             },
             modifier = Modifier.weight(1f).fillMaxWidth()
         )
+
+        // ۲. نوار ابزار کمکی (برای کیبوردهای موبایل)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            if (isCtrlPressed) {
+                // حالت CTRL فعال است: نمایش کلیدهای ترکیبی
+                val ctrlKeys = listOf("C (Cancel)" to "\u0003", "D (Exit)" to "\u0004", "Z (Suspend)" to "\u001a", "A (Start)" to "\u0001", "E (End)" to "\u0005")
+                ctrlKeys.forEach { (label, code) ->
+                    Button(
+                        onClick = { 
+                            sendTerminalInput(code)
+                            isCtrlPressed = false 
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFcc0000)),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Text(text = label, color = Color.White, fontSize = 12.sp)
+                    }
+                }
+                // دکمه لغو CTRL
+                Button(
+                    onClick = { isCtrlPressed = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.height(36.dp)
+                ) {
+                    Text("X", color = Color.White, fontSize = 12.sp)
+                }
+            } else {
+                // حالت عادی: نمایش کلیدهای ضروری
+                val keys = listOf(
+                    "ESC" to "\u001b", "TAB" to "\t", "/" to "/", "-" to "-",
+                    "UP" to "\u001b[A", "DOWN" to "\u001b[B", "LEFT" to "\u001b[D", "RIGHT" to "\u001b[C"
+                )
+                keys.forEach { (label, code) ->
+                    Button(
+                        onClick = { sendTerminalInput(code) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Text(text = label, color = Color.White, fontSize = 12.sp)
+                    }
+                }
+                // دکمه CTRL
+                Button(
+                    onClick = { isCtrlPressed = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.height(36.dp)
+                ) {
+                    Text("CTRL", color = Color.White, fontSize = 12.sp)
+                }
+            }
+        }
     }
 }
 

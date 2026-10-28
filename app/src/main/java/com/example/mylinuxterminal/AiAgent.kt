@@ -28,16 +28,16 @@ class AiAgent {
             $memory
             
             CRITICAL RULES:
-            1. FIRST, if the user gives a complex task, output a PLAN of steps in a valid JSON format like this: {"plan": ["step 1", "step 2"]}. Then in the NEXT step, start executing.
-            2. If a command fails with "not found", install it using `apk add <package_name>`. If it's slow, use a mirror: `sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && apk update`.
-            3. If a Python module is missing, use `pip install --break-system-packages <module>` or use Tsinghua mirror: `-i https://pypi.tuna.tsinghua.edu.cn/simple`.
-            4. If you receive a message saying "Command Timed Out", it means the command was too slow. Try a different approach or use a faster mirror.
-            5. When done, reply ONLY with: TASK_COMPLETE
+            1. PROGRESS TAG: Before EVERY command you output, you MUST prepend your estimated task completion percentage in this exact format: [PROGRESS: X%] (e.g., [PROGRESS: 25%] mkdir test). X must be a number between 0 and 100.
+            2. PLANNING: If the user gives a complex task, output a PLAN in JSON format like this: {"plan": ["step 1", "step 2"]}. Then in the NEXT step, start executing.
+            3. AUTO-INSTALL: If a command fails with "not found", install it using `apk add <package_name>`. If slow, use a mirror: `sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && apk update`.
+            4. PYTHON PACKAGES: If missing, use `pip install --break-system-packages <module>` or use Tsinghua mirror: `-i https://pypi.tuna.tsinghua.edu.cn/simple`.
+            5. TIMEOUT: If you receive "Command Timed Out", it means the command took >2 mins. Try a faster approach.
+            6. COMPLETION: When done, reply ONLY with: TASK_COMPLETE
         """.trimIndent()
 
         val messages = JSONArray().apply {
             put(JSONObject().put("role", "system").put("content", systemPrompt))
-            // مدیریت زمینه (فقط ۱۵ پیام آخر را نگه می‌داریم)
             val startIndex = maxOf(0, history.length() - 15)
             for (i in startIndex until history.length()) {
                 put(history.get(i))

@@ -29,9 +29,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Face // آیکون استاندارد
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Share // آیکون استاندارد
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -97,6 +97,9 @@ fun TerminalScreen() {
     var isAiRunning by remember { mutableStateOf(false) }
     var agentJob by remember { mutableStateOf<Job?>(null) }
     
+    // 👇 متغیر درصد پیشرفت
+    var aiProgress by remember { mutableStateOf(0) }
+    
     val agentLogs = remember { 
         val logs = mutableStateListOf<String>()
         val saved = prefs.getString("agent_logs", "[]")
@@ -107,7 +110,6 @@ fun TerminalScreen() {
         logs
     }
     
-    // حافظه بلندمدت
     var longTermMemory by remember { mutableStateOf(prefs.getString("lt_memory", "No successful commands yet.") ?: "") }
     
     val aiAgent = remember { AiAgent() }
@@ -172,7 +174,7 @@ fun TerminalScreen() {
         keyboardController?.show()
     }
 
-    // 👇 تایم‌اوت 45 ثانیه‌ای برای دستورات
+    // 👇 تایم‌اوت به ۲ دقیقه (۱۲۰,۰۰۰ میلی‌ثانیه) افزایش یافت
     suspend fun executeCommandAndWait(command: String): String {
         return withContext(Dispatchers.IO) {
             val deferred = CompletableDeferred<String>()
@@ -184,13 +186,13 @@ fun TerminalScreen() {
             ptyProcess.writeData("stty -echo; $command 2>&1; echo \"${terminalState.currentMarker}\"; stty echo\n")
             
             try {
-                withTimeout(45000) { // 45 ثانیه
+                withTimeout(120000) {
                     deferred.await()
                 }
             } catch (e: TimeoutCancellationException) {
                 terminalState.isWaitingForCommand = false
-                ptyProcess.writeData("\u0003") // ارسال Ctrl+C برای توقف دستور
-                "Command Timed Out after 45 seconds. It was too slow. Please try a faster method or mirror."
+                ptyProcess.writeData("\u0003")
+                "Command Timed Out after 2 minutes. It was too slow. Please try a faster method or mirror."
             }
         }
     }
@@ -279,6 +281,7 @@ fun TerminalScreen() {
 
     fun runAgent(userRequest: String) {
         isAiRunning = true
+        aiProgress = 0
         agentLogs.add("📝 درخواست جدید: $userRequest")
         saveHistory()
         
@@ -310,6 +313,7 @@ fun TerminalScreen() {
                 }
                 
                 if (aiResponse == "TASK_COMPLETE") {
+                    aiProgress = 100
                     agentLogs.add("✅ عملیات با موفقیت به پایان رسید!")
                     saveHistory()
                     break
@@ -322,14 +326,24 @@ fun TerminalScreen() {
                     saveHistory()
                     continue
                 }
+
+                // 👇 استخراج درصد پیشرفت از پاسخ هوش مصنوعی
+                val progressRegex = Regex("""\[PROGRESS:\s*(\d+)%\]""")
+                val match = progressRegex.find(aiResponse)
+                if (match != null) {
+                    aiProgress = match.groupValues[1].toIntOrNull() ?: aiProgress
+                }
                 
-                agentLogs.add("💻 اجرای دستور: $aiResponse")
+                // حذف تگ پیشرفت از دستور برای اجرا در ترمینال
+                val cleanCommand = aiResponse.replace(progressRegex, "").trim()
+
+                agentLogs.add("💻 اجرای دستور: $cleanCommand")
                 saveHistory()
                 
-                val output = executeCommandAndWait(aiResponse)
+                val output = executeCommandAndWait(cleanCommand)
                 
                 if (!output.contains("Timed Out")) {
-                    updateMemory(aiResponse)
+                    updateMemory(cleanCommand)
                 }
 
                 val displayOutput = if (output.isBlank()) "(بدون خروجی)" else output
@@ -372,9 +386,23 @@ fun TerminalScreen() {
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))
                         ) { Text("شروع", fontSize = 16.sp) }
                     } else {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.Cyan, strokeWidth = 3.dp)
-                            Button(onClick = { stopAgent() }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) { Text("STOP") }
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.Cyan, strokeWidth = 3.dp)
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text("در حال اجرا... ($aiProgress%)", color = Color.Yellow)
+                                }
+                                Button(onClick = { stopAgent() }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) { Text("STOP") }
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            // 👇 نوار پیشرفت (Progress Bar)
+                            LinearProgressIndicator(
+                                progress = aiProgress / 100f,
+                                modifier = Modifier.fillMaxWidth(),
+                                color = Color.Cyan,
+                                trackColor = Color.DarkGray
+                            )
                         }
                     }
                     Spacer(modifier = Modifier.height(16.dp))

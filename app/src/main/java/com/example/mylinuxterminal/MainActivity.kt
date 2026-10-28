@@ -287,7 +287,7 @@ fun TerminalScreen() {
             history.put(JSONObject().put("role", "user").put("content", userRequest))
             
             var step = 0
-            val maxStepsPerBatch = 30 // سقف مراحل به ۳۰ افزایش یافت
+            val maxStepsPerBatch = 30
             
             while (isAiRunning) {
                 step++
@@ -303,7 +303,13 @@ fun TerminalScreen() {
                 
                 val aiResponse = aiAgent.runAgentStep(apiKey, history, longTermMemory)
                 
-                if (aiResponse == null || aiResponse.startsWith("HTTP_ERROR") || aiResponse == "NETWORK_ERROR") {
+                if (aiResponse == null) {
+                    agentLogs.add("❌ خطای شبکه یا ارتباط با سرور. لطفاً اینترنت را بررسی کنید.")
+                    saveHistory()
+                    break
+                }
+                
+                if (aiResponse.startsWith("HTTP_ERROR") || aiResponse == "NETWORK_ERROR") {
                     agentLogs.add("❌ خطای شبکه یا ارتباط با سرور. لطفاً اینترنت را بررسی کنید.")
                     saveHistory()
                     break
@@ -316,9 +322,9 @@ fun TerminalScreen() {
                     break
                 }
 
-                var cleanCommand = aiResponse
+                // 👇 در اینجا مطمئن هستیم که aiResponse دیگر null نیست
+                var cleanCommand: String = aiResponse
                 
-                // استخراج درصد پیشرفت
                 val progressRegex = Regex("""\[PROGRESS:\s*(\d+)%\]""")
                 val match = progressRegex.find(cleanCommand)
                 if (match != null) {
@@ -326,7 +332,6 @@ fun TerminalScreen() {
                     cleanCommand = cleanCommand.replace(progressRegex, "").trim()
                 }
 
-                // 👇 پاکسازی هوشمند JSON (اگر مدل دستور را در JSON فرستاد)
                 if (cleanCommand.startsWith("{") && cleanCommand.contains("command")) {
                     try {
                         val jsonResponse = JSONObject(cleanCommand)

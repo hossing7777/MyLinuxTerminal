@@ -23,12 +23,19 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -39,6 +46,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -83,12 +91,11 @@ fun TerminalScreen() {
     var isExtracted by remember { mutableStateOf(false) }
     var showPackageDialog by remember { mutableStateOf(false) }
     var isInstalling by remember { mutableStateOf(false) }
-    var installProgress by remember { mutableStateOf(0f) }
 
     var inputText by remember { mutableStateOf("") }
     var fontSize by remember { mutableStateOf(14.sp) }
-    var textColor by remember { mutableStateOf(Color.Green) }
-    var bgColor by remember { mutableStateOf(Color.Black) }
+    var textColor by remember { mutableStateOf(Color(0xFF00FF00)) } // Neon Green
+    var bgColor by remember { mutableStateOf(Color(0xFF121212)) } // Dark Background
     var showSettings by remember { mutableStateOf(false) }
     
     var showAiDialog by remember { mutableStateOf(false) }
@@ -145,7 +152,16 @@ fun TerminalScreen() {
     fun copyAllText() {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("Terminal", outputLines.joinToString("\n")))
-        outputLines.add("--- Copied ---")
+        Toast.makeText(context, "متن کپی شد", Toast.LENGTH_SHORT).show()
+    }
+
+    // 👇 تابع بستن تمام پروسه‌های پس‌زمینه (پایتون و نود)
+    fun killProcesses() {
+        if (terminalState.ptyFd > 0) {
+            // killall دستور استاندارد بستن پروسه‌هاست
+            ptyProcess.writeData("killall -9 python3 node 2>/dev/null\n")
+            outputLines.add("🛑 تمام پروسه‌های پس‌زمینه (Python/Node) بسته شدند.")
+        }
     }
 
     fun sendToPty(data: String) {
@@ -261,17 +277,16 @@ fun TerminalScreen() {
             
             var step = 0
             var batch = 1
-            val maxStepsPerBatch = 8 // سقف هر دسته (می‌توانید تغییر دهید)
+            val maxStepsPerBatch = 8
             
             while (isAiRunning) {
                 step++
                 if (step > maxStepsPerBatch) {
-                    // 👇 اگر به سقف رسید، به جای توقف، به هوش مصنوعی می‌گوییم ادامه دهد
                     batch++
                     agentLogs.add("🔄 سقف مراحل پر شد. ارسال درخواست ادامه (دسته $batch)...")
                     saveHistory()
                     history.put(JSONObject().put("role", "user").put("content", "System Limit Reached. Please continue the task from where you left off. Output the next command."))
-                    step = 1 // ریست کردن شمارنده
+                    step = 1
                 }
 
                 agentLogs.add("🤖 در حال فکر کردن (دسته $batch - مرحله $step)...")
@@ -312,10 +327,19 @@ fun TerminalScreen() {
         }
     }
 
+    // 👇 پنجره چت هوش مصنوعی (طراحی زیباتر)
     if (showAiDialog) {
         AlertDialog(
             onDismissRequest = { if (!isAiRunning) showAiDialog = false },
-            title = { Text("🤖 AI Autonomous Agent", color = Color.Cyan) },
+            containerColor = Color(0xFF1E1E1E),
+            shape = RoundedCornerShape(16.dp),
+            title = { 
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.SmartToy, contentDescription = "AI", tint = Color.Cyan, modifier = Modifier.size(28.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("AI Autonomous Agent", color = Color.Cyan, fontWeight = FontWeight.Bold)
+                }
+            },
             text = {
                 Column {
                     if (apiKey.isBlank()) {
@@ -325,49 +349,59 @@ fun TerminalScreen() {
                             OutlinedTextField(
                                 value = aiPrompt,
                                 onValueChange = { aiPrompt = it },
-                                placeholder = { Text("مثلاً: در پوشه دانلود یک فایل پایتون بساز و اجرا کن") },
-                                modifier = Modifier.fillMaxWidth()
+                                placeholder = { Text("درخواست خود را اینجا بنویسید...", color = Color.Gray) },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White,
+                                    focusedBorderColor = Color.Cyan,
+                                    unfocusedBorderColor = Color.Gray
+                                )
                             )
-                            Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(16.dp))
                             Button(
                                 onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) },
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text("شروع عملیات (Start)") }
+                                modifier = Modifier.fillMaxWidth().height(48.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)),
+                                shape = RoundedCornerShape(12.dp)
+                            ) { Text("شروع عملیات (Start)", fontSize = 16.sp) }
                         } else {
-                            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.Cyan)
-                                Spacer(modifier = Modifier.width(16.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.Cyan, strokeWidth = 3.dp)
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text("در حال پردازش...", color = Color.Yellow)
+                                }
                                 Button(
                                     onClick = { stopAgent() },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
-                                ) {
-                                    Text("توقف اضطراری (STOP)")
-                                }
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) { Text("STOP", fontWeight = FontWeight.Bold) }
                             }
                         }
                         
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(20.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(), 
                             horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("گزارش زنده عملیات:", color = Color.Yellow, fontSize = 12.sp)
+                            Text("گزارش زنده (Live Logs):", color = Color.LightGray, fontSize = 12.sp)
                             TextButton(onClick = { agentLogs.clear(); saveHistory() }) {
-                                Text("پاک کردن تاریخچه", color = Color.Red, fontSize = 10.sp)
+                                Text("پاک کردن", color = Color(0xFFFF5252), fontSize = 12.sp)
                             }
                         }
                         
-                        LazyColumn(modifier = Modifier.height(250.dp).fillMaxWidth().background(Color(0xFF1E1E1E))) {
+                        LazyColumn(modifier = Modifier.height(220.dp).fillMaxWidth().background(Color(0xFF000000), RoundedCornerShape(8.dp)).padding(8.dp)) {
                             items(agentLogs) { log ->
-                                Text(log, color = Color.LightGray, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(4.dp))
+                                Text(log, color = Color(0xFF00FF00), fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(bottom = 4.dp))
                             }
                         }
                     }
                 }
             },
             confirmButton = {
-                if (!isAiRunning) TextButton(onClick = { showAiDialog = false }) { Text("بستن") }
+                if (!isAiRunning) TextButton(onClick = { showAiDialog = false }) { Text("بستن", color = Color.Cyan) }
             }
         )
     }
@@ -379,7 +413,7 @@ fun TerminalScreen() {
             text = {
                 LazyColumn {
                     items(availablePackages) { pkg ->
-                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(4.dp)) {
                             Checkbox(checked = selectedPackages.contains(pkg), onCheckedChange = { if (it) selectedPackages.add(pkg) else selectedPackages.remove(pkg) })
                             Text(pkg)
                         }
@@ -398,7 +432,14 @@ fun TerminalScreen() {
             text = {
                 Column {
                     Text("Hormuz API Key:", color = Color.Cyan)
-                    OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, placeholder = { Text("ng-...") }, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation(), singleLine = true)
+                    OutlinedTextField(
+                        value = apiKey, 
+                        onValueChange = { apiKey = it }, 
+                        placeholder = { Text("ng-...") }, 
+                        modifier = Modifier.fillMaxWidth(), 
+                        visualTransformation = PasswordVisualTransformation(), 
+                        singleLine = true
+                    )
                     Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Button(onClick = { prefs.edit().putString("api_key", apiKey).apply(); Toast.makeText(context, "ذخیره شد", Toast.LENGTH_SHORT).show() }, modifier = Modifier.weight(1f)) { Text("ذخیره") }
                         Spacer(modifier = Modifier.width(8.dp))
@@ -412,41 +453,73 @@ fun TerminalScreen() {
         )
     }
 
-    Column(modifier = Modifier.fillMaxSize().background(bgColor).padding(8.dp)) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Row {
-                TextButton(onClick = { copyAllText() }) { Text("Copy All", color = Color.Cyan, fontSize = 12.sp) }
-                TextButton(onClick = { showSettings = true }) { Text("⚙️", color = Color.Cyan, fontSize = 12.sp) }
-            }
-            Button(onClick = { showAiDialog = true }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), modifier = Modifier.height(32.dp)) {
-                Text("🤖 AI Agent", color = Color.White, fontSize = 12.sp)
-            }
+    // 👇 Scaffold استاندارد متریال ۳ (نوار بالا و دکمه شناور)
+    Scaffold(
+        containerColor = bgColor,
+        topBar = {
+            TopAppBar(
+                title = { Text("HguTerminal", color = Color.Cyan, fontWeight = FontWeight.Bold) },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF1E1E1E)),
+                actions = {
+                    IconButton(onClick = { copyAllText() }) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy", tint = Color.White)
+                    }
+                    // 👇 دکمه بستن پروسه‌ها
+                    IconButton(onClick = { killProcesses() }) {
+                        Icon(Icons.Default.Close, contentDescription = "Kill Processes", tint = Color(0xFFFF5252))
+                    }
+                    IconButton(onClick = { showSettings = true }) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White)
+                    }
+                }
+            )
+        },
+        floatingActionButton = {
+            ExtendedFloatingActionButton(
+                onClick = { showAiDialog = true },
+                containerColor = Color(0xFF6200EE),
+                contentColor = Color.White,
+                icon = { Icon(Icons.Default.SmartToy, contentDescription = "AI") },
+                text = { Text("AI Agent") }
+            )
         }
-
-        LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
-            items(outputLines) { line -> SelectionContainer { Text(text = line, color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize) } }
-        }
-        
-        Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (isCtrlPressed) {
-                listOf("C" to "\u0003", "D" to "\u0004").forEach { (l, c) -> Button(onClick = { sendToPty(c); isCtrlPressed = false }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red), modifier = Modifier.height(32.dp)) { Text(l, fontSize = 10.sp) } }
-            } else {
-                Button(onClick = { isCtrlPressed = true }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)), modifier = Modifier.height(32.dp)) { Text("CTRL", fontSize = 10.sp) }
-                listOf("ESC" to "\u001b", "TAB" to "\t", "/" to "/", "-" to "-", "UP" to "\u001b[A", "DOWN" to "\u001b[B").forEach { (l, c) ->
-                    Button(onClick = { sendToPty(c) }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)), modifier = Modifier.height(32.dp)) { Text(l, fontSize = 10.sp) }
+    ) { paddingValues ->
+        Column(modifier = Modifier.fillMaxSize().padding(paddingValues).padding(8.dp)) {
+            
+            LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
+                items(outputLines) { line -> 
+                    SelectionContainer { 
+                        Text(text = line, color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize) 
+                    } 
                 }
             }
-        }
+            
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 8.dp), 
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                if (isCtrlPressed) {
+                    listOf("C" to "\u0003", "D" to "\u0004").forEach { (l, c) -> 
+                        Button(onClick = { sendToPty(c); isCtrlPressed = false }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red), modifier = Modifier.height(36.dp)) { Text(l, fontSize = 12.sp) } 
+                    }
+                } else {
+                    Button(onClick = { isCtrlPressed = true }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)), modifier = Modifier.height(36.dp)) { Text("CTRL", fontSize = 12.sp) }
+                    listOf("ESC" to "\u001b", "TAB" to "\t", "/" to "/", "-" to "-", "UP" to "\u001b[A", "DOWN" to "\u001b[B").forEach { (l, c) ->
+                        Button(onClick = { sendToPty(c) }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)), modifier = Modifier.height(36.dp)) { Text(l, fontSize = 12.sp) }
+                    }
+                }
+            }
 
-        Row(modifier = Modifier.fillMaxWidth()) {
-            Text(text = "$ ", color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize)
-            BasicTextField(
-                value = inputText, onValueChange = { inputText = it },
-                textStyle = TextStyle(color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize),
-                modifier = Modifier.weight(1f).focusRequester(focusRequester), singleLine = true, enabled = isExtracted,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { sendToPty(inputText + "\n"); inputText = ""; focusRequester.requestFocus() })
-            )
+            Row(modifier = Modifier.fillMaxWidth().background(Color(0xFF1E1E1E), RoundedCornerShape(8.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(text = "$ ", color = Color.Cyan, fontFamily = FontFamily.Monospace, fontSize = fontSize, fontWeight = FontWeight.Bold)
+                BasicTextField(
+                    value = inputText, onValueChange = { inputText = it },
+                    textStyle = TextStyle(color = Color.White, fontFamily = FontFamily.Monospace, fontSize = fontSize),
+                    modifier = Modifier.weight(1f).focusRequester(focusRequester), singleLine = true, enabled = isExtracted,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { sendToPty(inputText + "\n"); inputText = ""; focusRequester.requestFocus() })
+                )
+            }
         }
     }
 }

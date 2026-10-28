@@ -69,7 +69,6 @@ fun TerminalScreen() {
     var isInstalling by remember { mutableStateOf(false) }
     var installProgress by remember { mutableStateOf(0f) }
     var installStatus by remember { mutableStateOf("") }
-    var isTerminalRunning by remember { mutableStateOf(false) }
 
     var inputText by remember { mutableStateOf("") }
     var fontSize by remember { mutableStateOf(14.sp) }
@@ -77,8 +76,8 @@ fun TerminalScreen() {
     var bgColor by remember { mutableStateOf(Color.Black) }
     var showSettings by remember { mutableStateOf(false) }
     
-    var shellWriter by remember { mutableStateOf<BufferedWriter?>(null) }
-    
+    val ptyProcess = remember { PtyProcess() }
+    var ptyFd by remember { mutableStateOf(-1) }
     val outputLines = remember { mutableStateListOf<String>() }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -89,7 +88,6 @@ fun TerminalScreen() {
     val selectedPackages = remember { mutableStateListOf("python3", "git", "nano") }
     var isCtrlPressed by remember { mutableStateOf(false) }
     
-    // 👇 فایل مخفی برای تشخیص نصب اولیه
     val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
 
     val manageStorageLauncher = rememberLauncherForActivityResult(
@@ -114,26 +112,21 @@ fun TerminalScreen() {
         outputLines.add("--- Copied ---")
     }
 
-    // 👇 تابع ریست کردن برنامه (برای تست مجدد)
     fun resetApp() {
         coroutineScope.launch(Dispatchers.IO) {
-            val alpineDir = File(context.filesDir, "alpine")
-            alpineDir.deleteRecursively()
+            File(context.filesDir, "alpine").deleteRecursively()
             withContext(Dispatchers.Main) {
                 outputLines.clear()
                 outputLines.add("App data cleared. Restarting...")
                 isExtracted = false
-                isTerminalRunning = false
                 showSettings = false
-                // فراخوانی مجدد تابع استخراج
                 coroutineScope.launch { extractLinux(context, outputLines) }
             }
         }
     }
 
     fun startTerminal(packagesToInstall: List<String> = emptyList()) {
-        if (isTerminalRunning) return
-        isTerminalRunning = true
+        if (ptyFd > 0) return
 
         coroutineScope.launch(Dispatchers.IO) {
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
@@ -143,74 +136,78 @@ fun TerminalScreen() {
             val tmpDir = File(context.cacheDir, "proot_tmp").absolutePath
             File(tmpDir).mkdirs()
             
-            // 👇 منطق نصب هوشمند
+            // 👇 اصلاح مسیر touch به / برای داخل PRoot
             val initialCmd = if (!setupDoneFile.exists() && packagesToInstall.isNotEmpty()) {
-                "apk update && apk add ${packagesToInstall.joinToString(" ")} && touch /data/data/com.example.mylinuxterminal/files/alpine/.setup_done && echo '::DONE::'"
+                "apk update && apk add ${packagesToInstall.joinToString(" ")} && touch /.setup_done && echo '::DONE::'"
             } else {
                 "echo '::DONE::'"
             }
 
-            try {
-                val pb = ProcessBuilder(
-                    prootPath, "--kill-on-exit", "--link2symlink", "--sysvipc", "-0",
-                    "-r", alpinePath, "-w", "/", "-b", "/dev", "-b", "/proc", "-b", "/sys",
-                    "-b", "/storage/emulated/0:/sdcard", "/bin/sh", "-c", "$initialCmd; exec /bin/sh -i"
-                )
-                
-                val env = pb.environment()
-                env["PROOT_TMP_DIR"] = tmpDir
-                env["PROOT_NO_SECCOMP"] = "1"
-                env["PROOT_LOADER"] = loaderPath
-                env["LD_LIBRARY_PATH"] = nativeLibDir
-                env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-                env["HOME"] = "/root"
-                env["TERM"] = "xterm-256color"
+            val scriptFile = File(context.filesDir, "start.sh")
+            scriptFile.writeText("""
+                $prootPath --kill-on-exit --link2symlink --sysvipc -0 -r $alpinePath -w / -b /dev -b /proc -b /sys -b /storage/emulated/0:/sdcard /bin/sh -c "$initialCmd; exec /bin/sh"
+            """.trimIndent())
+            scriptFile.setExecutable(true)
 
-                pb.redirectErrorStream(true)
-                val process = pb.start()
-                shellWriter = BufferedWriter(OutputStreamWriter(process.outputStream))
+            withContext(Dispatchers.Main) { 
+                outputLines.clear()
+                outputLines.add("Starting terminal engine...")
+            }
 
-                withContext(Dispatchers.Main) { 
-                    outputLines.clear()
-                    outputLines.add("Starting terminal engine...")
-                }
-
-                val reader = BufferedReader(InputStreamReader(process.inputStream))
+            // 👇 فراخوانی PTY
+            ptyFd = ptyProcess.createPty(
+                scriptFile.absolutePath, prootPath, alpinePath, tmpDir, loaderPath, nativeLibDir, context.filesDir.absolutePath
+            )
+            
+            if (ptyFd > 0) {
+                val buf = ByteArray(4096)
                 val regex = Regex("""\((\d+)/(\d+)\)""")
+                val buffer = StringBuilder()
 
-                var line = reader.readLine()
-                while (line != null) {
-                    val currentLine = line
-                    withContext(Dispatchers.Main) {
-                        if (currentLine.contains("::DONE::")) {
-                            isInstalling = false
-                            installProgress = 1f
-                            installStatus = "Ready!"
-                        } else {
-                            val match = regex.find(currentLine)
-                            if (match != null && isInstalling) {
-                                val current = match.groupValues[1].toIntOrNull() ?: 0
-                                val total = match.groupValues[2].toIntOrNull() ?: 1
-                                if (total > 0) installProgress = current.toFloat() / total.toFloat()
-                                installStatus = "Installing ($current/$total)..."
+                while (true) {
+                    val len = ptyProcess.readData(buf)
+                    if (len > 0) {
+                        val text = String(buf, 0, len)
+                        val cleanText = text.replace("\r\n", "\n").replace("\r", "")
+                        buffer.append(cleanText)
+
+                        while (buffer.contains("\n")) {
+                            val idx = buffer.indexOf("\n")
+                            val line = buffer.substring(0, idx)
+                            buffer.delete(0, idx + 1)
+
+                            withContext(Dispatchers.Main) {
+                                if (line.contains("::DONE::")) {
+                                    isInstalling = false
+                                    installProgress = 1f
+                                    installStatus = "Ready!"
+                                } else {
+                                    val match = regex.find(line)
+                                    if (match != null && isInstalling) {
+                                        val current = match.groupValues[1].toIntOrNull() ?: 0
+                                        val total = match.groupValues[2].toIntOrNull() ?: 1
+                                        if (total > 0) installProgress = current.toFloat() / total.toFloat()
+                                        installStatus = "Installing ($current/$total)..."
+                                    }
+                                    if (line.isNotBlank()) {
+                                        outputLines.add(line)
+                                        listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
+                                    }
+                                }
                             }
-                            if (currentLine.isNotBlank()) {
-                                outputLines.add(currentLine)
+                        }
+                        if (buffer.contains("# ") || buffer.contains("$ ")) {
+                            withContext(Dispatchers.Main) {
+                                outputLines.add(buffer.toString())
+                                buffer.clear()
                                 listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
                             }
                         }
-                    }
-                    line = reader.readLine()
+                    } else break
                 }
-                withContext(Dispatchers.Main) {
-                    outputLines.add("Terminal process ended.")
-                    isTerminalRunning = false
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    outputLines.add("Error: ${e.message}")
-                    isTerminalRunning = false
-                }
+                withContext(Dispatchers.Main) { outputLines.add("Terminal process ended.") }
+            } else {
+                withContext(Dispatchers.Main) { outputLines.add("Failed to create PTY.") }
             }
         }
     }
@@ -218,7 +215,6 @@ fun TerminalScreen() {
     LaunchedEffect(Unit) { 
         extractLinux(context, outputLines)
         isExtracted = true
-        // اگر قبلا نصب شده، مستقیم برو به ترمینال
         if (setupDoneFile.exists()) {
             startTerminal(emptyList())
         } else {
@@ -288,13 +284,10 @@ fun TerminalScreen() {
                         Button(onClick = { bgColor = Color(0xFF001F3F) }) { Text("Navy") }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
-                    // 👇 دکمه ریست
                     Button(
                         onClick = { resetApp() },
                         colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
-                    ) {
-                        Text("Reset App (Reinstall)")
-                    }
+                    ) { Text("Reset App (Reinstall)") }
                 }
             },
             confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Close") } }
@@ -302,11 +295,8 @@ fun TerminalScreen() {
     }
 
     fun sendCommand(cmd: String) {
-        if (shellWriter == null) return
-        try {
-            shellWriter?.write(cmd + "\n")
-            shellWriter?.flush()
-        } catch (e: Exception) { outputLines.add("Write Error: ${e.message}") }
+        if (ptyFd <= 0) return
+        ptyProcess.writeData(cmd + "\n")
     }
 
     Column(modifier = Modifier.fillMaxSize().background(bgColor).padding(8.dp)) {
@@ -343,7 +333,6 @@ fun TerminalScreen() {
             }
         }
         
-        // 👇 دکمه‌های کمکی با طراحی بهتر
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -357,7 +346,7 @@ fun TerminalScreen() {
             )
             keys.forEach { (label, code) ->
                 Button(
-                    onClick = { sendCommand(code); focusRequester.requestFocus() },
+                    onClick = { ptyProcess.writeData(code); focusRequester.requestFocus() },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                     modifier = Modifier.height(32.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333))
@@ -384,8 +373,8 @@ fun TerminalScreen() {
                         val c = newText.lastOrNull()?.uppercaseChar()
                         if (c != null) {
                             val ascii = c.code - 64
-                            if (ascii in 1..26) sendCommand(ascii.toChar().toString())
-                            else sendCommand(newText)
+                            if (ascii in 1..26) ptyProcess.writeData(ascii.toChar().toString())
+                            else ptyProcess.writeData(newText)
                         }
                         isCtrlPressed = false
                         inputText = ""
@@ -408,7 +397,6 @@ fun TerminalScreen() {
     }
 }
 
-// توابع کمکی خارج از Composable
 suspend fun extractLinux(context: Context, outputLines: MutableList<String>) = withContext(Dispatchers.IO) {
     val alpineDir = File(context.filesDir, "alpine")
     val assets = context.assets.list("") ?: emptyArray()

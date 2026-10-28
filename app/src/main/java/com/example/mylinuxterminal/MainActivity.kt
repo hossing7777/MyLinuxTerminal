@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
@@ -57,7 +58,6 @@ import java.nio.file.Files
 import java.nio.file.Paths
 import java.nio.file.attribute.PosixFilePermissions
 
-// 👇 این متغیرها را از حالت State خارج کردیم تا کرش نکنند
 class TerminalState {
     var isWaitingForCommand = false
     var currentMarker = ""
@@ -78,7 +78,7 @@ class MainActivity : ComponentActivity() {
 fun TerminalScreen() {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE) }
-    val terminalState = remember { TerminalState() } // استفاده از کلاس کمکی
+    val terminalState = remember { TerminalState() }
     
     var isExtracted by remember { mutableStateOf(false) }
     var showPackageDialog by remember { mutableStateOf(false) }
@@ -95,7 +95,18 @@ fun TerminalScreen() {
     var showAiDialog by remember { mutableStateOf(false) }
     var aiPrompt by remember { mutableStateOf("") }
     var isAiRunning by remember { mutableStateOf(false) }
-    val agentLogs = remember { mutableStateListOf<String>() }
+    var agentJob by remember { mutableStateOf<Job?>(null) }
+    
+    // 👇 بارگذاری تاریخچه از حافظه
+    val agentLogs = remember { 
+        val logs = mutableStateListOf<String>()
+        val saved = prefs.getString("agent_logs", "[]")
+        try {
+            val arr = JSONArray(saved)
+            for (i in 0 until arr.length()) logs.add(arr.getString(i))
+        } catch (e: Exception) {}
+        logs
+    }
     
     val aiAgent = remember { AiAgent() }
     var apiKey by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
@@ -119,6 +130,12 @@ fun TerminalScreen() {
         contract = ActivityResultContracts.StartActivityForResult()
     ) {}
 
+    fun saveHistory() {
+        val arr = JSONArray()
+        agentLogs.forEach { arr.put(it) }
+        prefs.edit().putString("agent_logs", arr.toString()).apply()
+    }
+
     fun checkStoragePermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
             val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
@@ -139,7 +156,7 @@ fun TerminalScreen() {
         keyboardController?.show()
     }
 
-    // 👇 تابع اجرای دستور و انتظار برای خروجی
+    // 👇 اجرای دستور با stty -echo (برای مخفی کردن تایپ شدن دستور)
     suspend fun executeCommandAndWait(command: String): String {
         return withContext(Dispatchers.IO) {
             val deferred = CompletableDeferred<String>()
@@ -148,7 +165,8 @@ fun TerminalScreen() {
             terminalState.commandOutputBuffer.clear()
             terminalState.isWaitingForCommand = true
             
-            ptyProcess.writeData("$command 2>&1; echo \"${terminalState.currentMarker}\"\n")
+            // stty -echo دستور را مخفی می‌کند، سپس اجرا، سپس echo را برمی‌گرداند
+            ptyProcess.writeData("stty -echo; $command 2>&1; echo \"${terminalState.currentMarker}\"; stty echo\n")
             
             deferred.await()
         }
@@ -191,7 +209,6 @@ fun TerminalScreen() {
                         val text = String(buf, 0, len)
                         val cleanText = cleanAnsi(text)
 
-                        // پردازش خروجی برای ایجنت
                         if (terminalState.isWaitingForCommand) {
                             terminalState.commandOutputBuffer.append(cleanText)
                             if (terminalState.commandOutputBuffer.contains(terminalState.currentMarker)) {
@@ -201,7 +218,6 @@ fun TerminalScreen() {
                             }
                         }
 
-                        // آپدیت UI
                         withContext(Dispatchers.Main) {
                             if (cleanText.contains("::SETUP_DONE::")) isInstalling = false
                             
@@ -230,12 +246,21 @@ fun TerminalScreen() {
         checkStoragePermission()
     }
 
+    // 👇 تابع توقف اضطراری
+    fun stopAgent() {
+        agentJob?.cancel()
+        sendToPty("\u0003") // ارسال Ctrl+C به لینوکس
+        isAiRunning = false
+        agentLogs.add("🛑 عملیات توسط کاربر متوقف شد.")
+        saveHistory()
+    }
+
     fun runAgent(userRequest: String) {
         isAiRunning = true
-        agentLogs.clear()
-        agentLogs.add("📝 درخواست: $userRequest")
+        agentLogs.add("📝 درخواست جدید: $userRequest")
+        saveHistory()
         
-        coroutineScope.launch {
+        agentJob = coroutineScope.launch {
             val history = JSONArray()
             history.put(JSONObject().put("role", "user").put("content", userRequest))
             
@@ -245,36 +270,44 @@ fun TerminalScreen() {
             while (step < maxSteps && isAiRunning) {
                 step++
                 agentLogs.add("🤖 در حال فکر کردن (مرحله $step)...")
+                saveHistory()
                 
                 val aiResponse = aiAgent.runAgentStep(apiKey, history)
                 
                 if (aiResponse == null || aiResponse.startsWith("Error")) {
                     agentLogs.add("❌ خطا در ارتباط: $aiResponse")
+                    saveHistory()
                     break
                 }
                 
                 if (aiResponse == "TASK_COMPLETE") {
                     agentLogs.add("✅ عملیات با موفقیت به پایان رسید!")
+                    saveHistory()
                     break
                 }
                 
                 agentLogs.add("💻 اجرای دستور: $aiResponse")
+                saveHistory()
                 
-                // 👇 اجرای دستور و گرفتن خروجی به صورت امن
                 val output = executeCommandAndWait(aiResponse)
                 
                 val displayOutput = if (output.isBlank()) "(بدون خروجی)" else output
                 agentLogs.add("📄 خروجی ترمینال:\n$displayOutput")
+                saveHistory()
                 
                 history.put(JSONObject().put("role", "assistant").put("content", aiResponse))
                 history.put(JSONObject().put("role", "user").put("content", "The command output was:\n$output\n\nWhat is the next command? If the task is complete, output TASK_COMPLETE."))
             }
             
-            if (step >= maxSteps) agentLogs.add("⚠️ به حداکثر تعداد مراحل رسیدیم.")
+            if (step >= maxSteps) {
+                agentLogs.add("⚠️ به حداکثر تعداد مراحل رسیدیم.")
+                saveHistory()
+            }
             isAiRunning = false
         }
     }
 
+    // 👇 پنجره چت
     if (showAiDialog) {
         AlertDialog(
             onDismissRequest = { if (!isAiRunning) showAiDialog = false },
@@ -297,11 +330,29 @@ fun TerminalScreen() {
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text("شروع عملیات (Start)") }
                         } else {
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.Cyan)
+                            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.Cyan)
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Button(
+                                    onClick = { stopAgent() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                                ) {
+                                    Text("توقف اضطراری (STOP)")
+                                }
+                            }
                         }
                         
                         Spacer(modifier = Modifier.height(16.dp))
-                        Text("گزارش زنده عملیات:", color = Color.Yellow, fontSize = 12.sp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(), 
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                        ) {
+                            Text("گزارش زنده عملیات:", color = Color.Yellow, fontSize = 12.sp)
+                            TextButton(onClick = { agentLogs.clear(); saveHistory() }) {
+                                Text("پاک کردن تاریخچه", color = Color.Red, fontSize = 10.sp)
+                            }
+                        }
                         
                         LazyColumn(modifier = Modifier.height(250.dp).fillMaxWidth().background(Color(0xFF1E1E1E))) {
                             items(agentLogs) { log ->
@@ -396,7 +447,7 @@ fun TerminalScreen() {
     }
 }
 
-// توابع کمکی (بدون تغییر)
+// توابع کمکی
 fun cleanAnsi(text: String): String {
     var cleaned = text.replace(Regex("""\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])"""), "")
     cleaned = cleaned.replace(Regex("""\[\d+\s+\d+%"""), "")

@@ -136,7 +136,7 @@ fun TerminalScreen() {
                 val pb = ProcessBuilder(
                     prootPath, "--kill-on-exit", "--link2symlink", "--sysvipc", "-0",
                     "-r", alpinePath, "-w", "/", "-b", "/dev", "-b", "/proc", "-b", "/sys",
-                    "-b", "/storage/emulated/0:/sdcard", "/bin/sh", "-c", "$initialCmd; exec /bin/sh"
+                    "-b", "/storage/emulated/0:/sdcard", "/bin/sh", "-c", "$initialCmd; exec /bin/sh -i"
                 )
                 
                 val env = pb.environment()

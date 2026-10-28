@@ -18,18 +18,21 @@ class AiAgent {
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    // 👇 این تابع حالا حافظه (History) را نگه می‌دارد
     suspend fun runAgentStep(apiKey: String, history: JSONArray): String? = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) return@withContext "Error: API Key is missing."
 
+        // 👇 پرامپت سیستمی اصلاح شده
         val systemPrompt = """
             You are an autonomous AI Linux Agent inside an Android app.
             You will be given a task. You must execute it step by step.
             At each step, you MUST output ONLY the exact bash/linux command to execute.
-            NO markdown, NO explanations.
+            NO markdown, NO explanations, NO backticks.
             You will receive the output of your command.
             If a command fails, analyze the error and provide a corrected command.
-            When the entire task is successfully completed, you MUST output exactly the word: TASK_COMPLETE
+            
+            CRITICAL RULE: When the entire task is successfully completed, you must NOT output any Linux command anymore. 
+            Instead, just reply with the exact text: TASK_COMPLETE
+            Never try to execute TASK_COMPLETE as a shell command.
         """.trimIndent()
 
         val messages = JSONArray().apply {

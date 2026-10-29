@@ -950,12 +950,24 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
                 put("PYTHONUNBUFFERED", "1")
             }
             
+            val logFile = File("/sdcard/Download/Local_AI_Models/local_ai_server.log")
             try {
+                val dateStr = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+                logFile.appendText("\n\n========== 🚀 New Run Started at $dateStr ==========\n")
+                
                 val process = pb.start()
                 val reader = BufferedReader(InputStreamReader(process.inputStream))
                 var line = reader.readLine()
                 while (line != null) {
                     val currentLine = line
+                    
+                    // 👇 ذخیره لاگ در فایل
+                    try {
+                        logFile.appendText("$currentLine\n")
+                    } catch (e: Exception) {
+                        // نادیده گرفتن خطای احتمالی دسترسی به فایل
+                    }
+                    
                     withContext(Dispatchers.Main) {
                         state.serverLog.add(currentLine)
                         if (currentLine.contains("::PROGRESS:")) {

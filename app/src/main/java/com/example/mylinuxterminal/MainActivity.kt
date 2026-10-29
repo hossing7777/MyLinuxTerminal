@@ -125,6 +125,12 @@ fun MainScreen() {
     var selectedTab by remember { mutableStateOf(0) }
     val localAiState = remember { LocalAIState() }
     val mainScope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val dummyOutput = remember { mutableStateListOf<String>() }
+    
+    LaunchedEffect(Unit) {
+        extractLinux(context, dummyOutput)
+    }
     
     Scaffold(
         bottomBar = {
@@ -441,7 +447,6 @@ fun TerminalScreen() {
     }
 
     LaunchedEffect(Unit) { 
-        extractLinux(context, outputLines)
         isExtracted = true
         if (setupDoneFile.exists() || prefs.getBoolean("skip_setup", false)) startTerminal(emptyList()) else showPackageDialog = true
         checkStoragePermission()
@@ -878,6 +883,7 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
             val scriptFile = File(context.filesDir, "local_ai_start.sh")
             scriptFile.writeText("""
                 #!/bin/sh
+                export PYTHONUNBUFFERED=1
                 MODEL_DIR="$modelsDirPath"
                 mkdir -p "${'$'}MODEL_DIR"
                 MODEL_FILE=${'$'}(ls "${'$'}MODEL_DIR"/*.gguf 2>/dev/null | head -n 1)
@@ -893,17 +899,18 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
                 mkdir -p "${'$'}CACHE/apk" "${'$'}CACHE/pip"
                 
                 echo "::PROGRESS:10::"
-                echo "Installing dependencies (APK)..."
-                apk add --cache-dir="${'$'}CACHE/apk" python3 py3-pip git cmake build-base libffi-dev
+                echo "Installing dependencies (APK)... This takes a few minutes."
+                apk add --cache-dir="${'$'}CACHE/apk" python3 py3-pip python3-dev git cmake build-base libffi-dev linux-headers
+                cp -rn /var/cache/apk/* "${'$'}CACHE/apk/" 2>/dev/null || true
                 
                 echo "::PROGRESS:40::"
-                echo "Installing Python packages (llama-cpp)..."
+                echo "Installing Python packages (llama-cpp)... Compiling from source takes 10-20 mins."
                 pip install --cache-dir="${'$'}CACHE/pip" llama-cpp-python[server] --break-system-packages --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
                 
                 echo "::PROGRESS:90::"
                 echo "Starting server..."
-                python3 -m llama_cpp.server --model "${'$'}MODEL_FILE" --host 0.0.0.0 --port 8000 &
                 echo "::SETUP_DONE::"
+                python3 -u -m llama_cpp.server --model "${'$'}MODEL_FILE" --host 0.0.0.0 --port 8000
             """.trimIndent())
             scriptFile.setExecutable(true)
             
@@ -917,6 +924,7 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
                 "/bin/sh", scriptFile.absolutePath
             )
             
+            pb.redirectErrorStream(true)
             pb.environment().apply {
                 put("PROOT_TMP_DIR", tmpDir)
                 put("PROOT_NO_SECCOMP", "1")
@@ -925,6 +933,7 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
                 put("LD_LIBRARY_PATH", nativeLibDir)
                 put("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
                 put("HOME", "/root")
+                put("PYTHONUNBUFFERED", "1")
             }
             
             try {
@@ -1025,7 +1034,7 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("در حال آماده‌سازی... (${(state.progress * 100).toInt()}%)")
+                        Text("در حال کار... (${(state.progress * 100).toInt()}%)")
                     }
                 } else {
                     Text("شروع / بررسی مدل (Start Server)")

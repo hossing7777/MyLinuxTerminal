@@ -13,6 +13,8 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import android.Manifest
+import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -148,6 +150,27 @@ fun TerminalScreen() {
     val coroutineScope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    
+    // 👇 درخواست دسترسی‌های سخت‌افزاری
+    val hardwarePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val granted = permissions.entries.filter { it.value }.map { it.key }
+        Toast.makeText(context, "دسترسی‌های داده شده: ${granted.size}", Toast.LENGTH_LONG).show()
+    }
+
+    fun requestHardwarePermissions() {
+        val permissions = arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.CAMERA,
+            Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.BODY_SENSORS
+        )
+        hardwarePermissionLauncher.launch(permissions)
+    }
 
     val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop")
     val selectedPackages = remember { mutableStateListOf("python3", "git", "nano") }
@@ -667,6 +690,14 @@ fun TerminalScreen() {
                             }, 
                             modifier = Modifier.weight(1f)
                         ) { Text("تست") }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { requestHardwarePermissions() },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF008080))
+                    ) {
+                        Text("Grant Hardware Permissions (دسترسی به سخت‌افزار)")
                     }
                     if (isTesting) Text("در حال تست...", color = Color.Yellow, modifier = Modifier.padding(top = 4.dp))
                     if (testResult.isNotEmpty()) Text(testResult, color = if (testResult.contains("✅")) Color.Green else Color.Red, modifier = Modifier.padding(top = 4.dp))

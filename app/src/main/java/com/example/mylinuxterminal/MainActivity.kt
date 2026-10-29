@@ -151,26 +151,17 @@ fun TerminalScreen() {
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
-    // 👇 درخواست خودکار تمام دسترسی‌های سخت‌افزاری در اولین اجرا
     val hardwarePermissions = arrayOf(
-        Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION,
-        Manifest.permission.RECORD_AUDIO,
-        Manifest.permission.CAMERA,
-        Manifest.permission.BLUETOOTH_SCAN,
-        Manifest.permission.BLUETOOTH_CONNECT,
-        Manifest.permission.BODY_SENSORS,
-        Manifest.permission.READ_MEDIA_IMAGES,
-        Manifest.permission.READ_MEDIA_VIDEO,
-        Manifest.permission.READ_MEDIA_AUDIO
+        Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION,
+        Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA,
+        Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT,
+        Manifest.permission.BODY_SENSORS, Manifest.permission.READ_MEDIA_IMAGES,
+        Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_AUDIO
     )
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val granted = permissions.entries.filter { it.value }.map { it.key }
-        // لاگ کردن تعداد دسترسی‌های داده شده
-    }
+    ) {}
 
     fun requestAllHardwarePermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -186,8 +177,8 @@ fun TerminalScreen() {
         }
     }
 
-    val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop")
-    val selectedPackages = remember { mutableStateListOf("python3", "git", "nano") }
+    val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop", "net-tools", "procps")
+    val selectedPackages = remember { mutableStateListOf("python3", "git", "nano", "bash", "net-tools", "procps") }
     var isCtrlPressed by remember { mutableStateOf(false) }
     
     val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
@@ -198,15 +189,9 @@ fun TerminalScreen() {
         chatList.clear()
         chatsDir.listFiles { file -> file.extension == "json" }?.forEach { file ->
             try {
-                val content = file.readText()
-                val json = JSONObject(content)
-                chatList.add(ChatSession(
-                    id = json.getString("id"),
-                    title = json.getString("title"),
-                    timestamp = json.getLong("timestamp"),
-                    history = json.getJSONArray("history")
-                ))
-            } catch (e: Exception) { Log.e("ChatHistory", "Error loading chat", e) }
+                val json = JSONObject(file.readText())
+                chatList.add(ChatSession(json.getString("id"), json.getString("title"), json.getLong("timestamp"), json.getJSONArray("history")))
+            } catch (e: Exception) {}
         }
         chatList.sortByDescending { it.timestamp }
     }
@@ -217,25 +202,19 @@ fun TerminalScreen() {
             val file = File(chatsDir, "$currentChatId.json")
             val title = currentHistory.getJSONObject(0).getString("content").take(30) + "..."
             val json = JSONObject().apply {
-                put("id", currentChatId)
-                put("title", title)
-                put("timestamp", System.currentTimeMillis())
-                put("history", currentHistory)
+                put("id", currentChatId); put("title", title); put("timestamp", System.currentTimeMillis()); put("history", currentHistory)
             }
             file.writeText(json.toString())
-        } catch (e: Exception) { Log.e("ChatHistory", "Error saving chat", e) }
+        } catch (e: Exception) {}
     }
 
     fun loadGlobalMemory() {
-        if (globalMemoryFile.exists()) {
-            globalLessons = globalMemoryFile.readText()
-        }
+        if (globalMemoryFile.exists()) globalLessons = globalMemoryFile.readText()
     }
 
     fun appendToGlobalMemory(errorMsg: String, solution: String) {
         try {
-            val entry = "Error: $errorMsg\nSolution: $solution\n---\n"
-            globalMemoryFile.appendText(entry)
+            globalMemoryFile.appendText("Error: $errorMsg\nSolution: $solution\n---\n")
             loadGlobalMemory()
         } catch (e: Exception) {}
     }
@@ -248,16 +227,12 @@ fun TerminalScreen() {
     }
 
     LaunchedEffect(Unit) {
-        // 👇 درخواست مجوز در بدو ورود
         requestAllHardwarePermissions()
-        
         loadAllChats()
         loadGlobalMemory()
     }
 
-    val manageStorageLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) {}
+    val manageStorageLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.StartActivityForResult()) {}
 
     fun checkStoragePermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
@@ -297,15 +272,68 @@ fun TerminalScreen() {
             ptyProcess.writeData("stty -echo; $command 2>&1; echo \"${terminalState.currentMarker}\"; stty echo\n")
             
             try {
-                withTimeout(120000) {
-                    deferred.await()
-                }
+                withTimeout(120000) { deferred.await() }
             } catch (e: TimeoutCancellationException) {
                 terminalState.isWaitingForCommand = false
                 ptyProcess.writeData("\u0003")
                 "Command Timed Out after 2 minutes."
             }
         }
+    }
+
+    // 👇 تابع خودترمیم (System-Level Auto-Healing) - این هسته اصلی خودمختاری است
+    suspend fun executeWithAutoHeal(command: String): String {
+        var output = executeCommandAndWait(command)
+        
+        // تشخیص خطای "پیدا نشدن پکیج"
+        if (output.contains("not found", ignoreCase = true) || output.contains("Permission denied", ignoreCase = true)) {
+            // استخراج نام پکیج از خطا با Regex برای دقت بالا
+            val missingCmd = Regex("([^:\\s]+): not found").find(output)?.groupValues?.get(1)?.trim() ?: ""
+            
+            val pkgToInstall = when (missingCmd) {
+                "bash" -> "bash"
+                "python3", "python" -> "python3"
+                "curl" -> "curl"
+                "wget" -> "wget"
+                "git" -> "git"
+                "ifconfig" -> "net-tools"
+                "free" -> "procps"
+                "nano" -> "nano"
+                "vim" -> "vim"
+                "ssh" -> "openssh"
+                "zip" -> "zip"
+                "unzip" -> "unzip"
+                "node" -> "nodejs"
+                "sqlite3" -> "sqlite"
+                "lspci" -> "pciutils"
+                "lsusb" -> "usbutils"
+                else -> missingCmd
+            }
+
+            if (pkgToInstall.isNotBlank() && pkgToInstall.length < 20 && !pkgToInstall.contains("/")) {
+                coroutineScope.launch(Dispatchers.Main) {
+                    agentLogs.add("⚙️ سیستم به طور خودکار پکیج '$pkgToInstall' را نصب می‌کند...")
+                }
+                
+                // ۱. تلاش برای نصب
+                var installOutput = executeCommandAndWait("apk add --no-cache $pkgToInstall 2>&1")
+                
+                // ۲. اگر نصب موفق نبود (مشکل شبکه یا Mirror)، Mirror را عوض می‌کنیم
+                if (installOutput.contains("temporary error", ignoreCase = true) || installOutput.contains("error", ignoreCase = true)) {
+                    coroutineScope.launch(Dispatchers.Main) {
+                        agentLogs.add("🔄 خطا در نصب. تغییر Mirror به Aliyun و تلاش مجدد...")
+                    }
+                    installOutput = executeCommandAndWait("sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && apk update && apk add --no-cache $pkgToInstall 2>&1")
+                }
+
+                // ۳. دوباره دستور اصلی را اجرا می‌کنیم
+                coroutineScope.launch(Dispatchers.Main) {
+                    agentLogs.add("✅ نصب انجام شد. اجرای مجدد دستور اصلی...")
+                }
+                output = executeCommandAndWait(command)
+            }
+        }
+        return output
     }
 
     fun startTerminal(packagesToInstall: List<String> = emptyList()) {
@@ -318,10 +346,11 @@ fun TerminalScreen() {
             val tmpDir = File(context.cacheDir, "proot_tmp").absolutePath
             File(tmpDir).mkdirs()
             
+            // نصب پیش‌فرض پکیج‌های ضروری
             val initialCmd = if (!setupDoneFile.exists() && packagesToInstall.isNotEmpty()) {
-                "apk update && apk add ${packagesToInstall.joinToString(" ")} && touch /.setup_done && echo '::SETUP_DONE::'"
+                "apk update && apk add bash net-tools procps ${packagesToInstall.joinToString(" ")} && touch /.setup_done && echo '::SETUP_DONE::'"
             } else {
-                "echo '::SETUP_DONE::'"
+                "apk info -e bash || apk add bash; apk info -e net-tools || apk add net-tools; apk info -e procps || apk add procps; echo '::SETUP_DONE::'"
             }
 
             val scriptFile = File(context.filesDir, "start.sh")
@@ -399,13 +428,11 @@ fun TerminalScreen() {
         currentHistory = session.history
         agentLogs.clear()
         agentLogs.add("📂 چت بارگذاری شد: ${session.title}")
-        
         for (i in 0 until session.history.length()) {
             val msg = session.history.getJSONObject(i)
             val role = if (msg.getString("role") == "user") "👤 شما" else "🤖 AI"
             agentLogs.add("$role: ${msg.getString("content")}")
         }
-        
         showHistoryDialog = false
         showAiDialog = true
     }
@@ -415,14 +442,14 @@ fun TerminalScreen() {
         aiProgress = 0
         agentLogs.add("📝 درخواست جدید: $userRequest")
         
-        val userMsg = JSONObject().put("role", "user").put("content", userRequest)
-        currentHistory.put(userMsg)
+        currentHistory.put(JSONObject().put("role", "user").put("content", userRequest))
         saveCurrentChat()
         
         agentJob = coroutineScope.launch {
             var step = 0
             val maxStepsPerBatch = 30
             var fallbackIndex = 0
+            var consecutiveErrors = 0 
             
             while (isAiRunning) {
                 step++
@@ -457,8 +484,7 @@ fun TerminalScreen() {
                 
                 if (aiResponse == "RETRY_ERROR" || aiResponse == null || aiResponse.startsWith("HTTP_ERROR")) {
                     fallbackIndex++
-                    val nextModelName = fallbackModels[fallbackIndex % fallbackModels.size]
-                    agentLogs.add("⚠️ خطا. تغییر به مدل: $nextModelName")
+                    agentLogs.add("⚠️ خطا. تغییر به مدل: ${fallbackModels[fallbackIndex % fallbackModels.size]}")
                     if (fallbackIndex % fallbackModels.size == 0) delay(30000) else delay(5000)
                     step--
                     continue
@@ -499,13 +525,26 @@ fun TerminalScreen() {
                 agentLogs.add("💻 اجرای دستور: $cleanCommand")
                 currentHistory.put(JSONObject().put("role", "assistant").put("content", cleanCommand))
                 
-                val output = executeCommandAndWait(cleanCommand)
+                // 👇 استفاده از تابع خودترمیم (Auto-Heal)
+                val output = executeWithAutoHeal(cleanCommand)
                 
-                if (output.contains("not found") || output.contains("Permission denied")) {
+                if (output.contains("not found", ignoreCase = true) || output.contains("error", ignoreCase = true) || output.contains("Permission denied", ignoreCase = true)) {
+                    consecutiveErrors++
                     if (selectedModelId == "auto") currentModel = "nvidia/nemotron-3-ultra-550b-a55b:free"
-                    appendToGlobalMemory(cleanCommand, "Failed with error: ${output.take(50)}. Hint: Use apk or check permissions.")
-                } else if (!output.contains("Timed Out")) {
-                    updateMemory(cleanCommand)
+                    
+                    agentLogs.add("⚠️ خطای پیچیده شناسایی شد ($consecutiveErrors/5). درخواست راه‌حل از AI...")
+                    appendToGlobalMemory(cleanCommand, "Failed with error: ${output.take(50)}")
+                    currentHistory.put(JSONObject().put("role", "user").put("content", "The command failed with error:\n$output\n\nPlease analyze the error and output a corrected command."))
+                    
+                    if (consecutiveErrors >= 5) {
+                        agentLogs.add("❌ تعداد خطاهای متوالی به 5 رسید. برای جلوگیری از حلقه بی‌پایان متوقف شد.")
+                        break
+                    }
+                } else {
+                    consecutiveErrors = 0
+                    if (!output.contains("Timed Out")) {
+                        updateMemory(cleanCommand)
+                    }
                 }
 
                 val displayOutput = if (output.isBlank()) "(بدون خروجی)" else output
@@ -565,7 +604,6 @@ fun TerminalScreen() {
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("AI Agent", color = Color.Cyan, fontWeight = FontWeight.Bold)
                     }
-                    // 👇 آیکون لیست استاندارد
                     IconButton(onClick = { showHistoryDialog = true }) {
                         Icon(Icons.Default.List, contentDescription = "History", tint = Color.White)
                     }

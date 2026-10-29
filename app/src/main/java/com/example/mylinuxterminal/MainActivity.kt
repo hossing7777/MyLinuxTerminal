@@ -50,6 +50,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -151,8 +152,14 @@ fun MainScreen() {
         }
     ) { paddingValues ->
         Box(modifier = Modifier.padding(paddingValues)) {
-            if (selectedTab == 0) TerminalScreen()
-            if (selectedTab == 1) LocalAIScreen(localAiState, mainScope)
+            Box(modifier = Modifier.fillMaxSize()) {
+                Box(modifier = Modifier.fillMaxSize().zIndex(if (selectedTab == 0) 1f else 0f)) {
+                    TerminalScreen()
+                }
+                Box(modifier = Modifier.fillMaxSize().zIndex(if (selectedTab == 1) 1f else 0f)) {
+                    LocalAIScreen(localAiState, mainScope)
+                }
+            }
         }
     }
 }
@@ -396,7 +403,7 @@ fun TerminalScreen() {
             val tmpDir = File(context.cacheDir, "proot_tmp").absolutePath
             File(tmpDir).mkdirs()
             
-            val installFunc = "install_pkg() { PKG=\$1 ; if apk info -e \$PKG >/dev/null 2>&1; then return; fi ; if ls \$CACHE/\$PKG-*.apk >/dev/null 2>&1; then echo \"📦 [Local Cache] Installing \$PKG from local storage...\" ; apk add --cache-dir=\$CACHE --allow-untrusted \$PKG ; else echo \"🌐 [Internet] Downloading and installing \$PKG...\" ; apk add --cache-dir=\$CACHE \$PKG ; fi ; }"
+            val installFunc = "install_pkg() { PKG=\$1 ; if apk info -e \$PKG >/dev/null 2>&1; then return; fi ; if ls \$CACHE/\$PKG-*.apk >/dev/null 2>&1; then echo '📦 [Local Cache] Installing \$PKG from local storage...' ; apk add --cache-dir=\$CACHE --allow-untrusted \$PKG ; else echo '🌐 [Internet] Downloading and installing \$PKG...' ; apk add --cache-dir=\$CACHE \$PKG ; fi ; }"
             
             val setupPart = if (!setupDoneFile.exists() && packagesToInstall.isNotEmpty()) {
                 packagesToInstall.joinToString(" ; ") { "install_pkg $it" } + " ; touch /.setup_done"

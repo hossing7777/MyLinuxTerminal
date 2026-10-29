@@ -35,6 +35,11 @@ class AiAgent {
             4. NETWORKING TOOLS: If you need `curl` or `wget`, you MUST install them first using `apk add curl` or `apk add wget`.
             5. NOEXEC MOUNT: The /sdcard directory is mounted as "noexec". You CANNOT execute .sh scripts directly using `./script.sh`. You MUST run them using `sh script.sh`.
             6. TIMEOUT: If you receive "Command Timed Out", it means the command took >2 mins. Try a faster approach.
+            6. LOCAL PACKAGE CACHE (IMPORTANT): A persistent package cache exists at /sdcard/Download/Local_AI_Models/Library_Cache.
+               To save bandwidth and time:
+               - For APK packages use: `apk add --cache-dir=/sdcard/Download/Local_AI_Models/Library_Cache/apk <package>`
+               - For Python packages use: `pip install --cache-dir=/sdcard/Download/Local_AI_Models/Library_Cache/pip --break-system-packages <package>`
+               This way, the system checks the cache first and only downloads if missing.
             7. COMPLETION: When done, reply ONLY with: TASK_COMPLETE
         """.trimIndent()
     }

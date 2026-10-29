@@ -18,7 +18,7 @@ class AiAgent {
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    suspend fun runAgentStep(apiKey: String, history: JSONArray, memory: String): String? = withContext(Dispatchers.IO) {
+    suspend fun runAgentStep(apiKey: String, modelName: String, history: JSONArray, memory: String): String? = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) return@withContext "Error: API Key is missing."
 
         val systemPrompt = """
@@ -32,7 +32,7 @@ class AiAgent {
             2. PROGRESS TAG: Before EVERY command you output, prepend your estimated completion percentage like this: [PROGRESS: X%] (e.g., [PROGRESS: 25%] mkdir test).
             3. AUTO-INSTALL: If a command fails with "not found", install it using `apk add <package_name>`. If slow, use a mirror: `sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && apk update`.
             4. PYTHON PACKAGES: If missing, use `pip install --break-system-packages <module>` or use Tsinghua mirror.
-            5. NOEXEC MOUNT (VERY IMPORTANT): The /sdcard directory is mounted as "noexec". You CANNOT execute .sh scripts or binaries directly from /sdcard using `./script.sh`. You MUST run them using `sh script.sh` or `bash script.sh`.
+            5. NOEXEC MOUNT: The /sdcard directory is mounted as "noexec". You CANNOT execute .sh scripts directly using `./script.sh`. You MUST run them using `sh script.sh`.
             6. TIMEOUT: If you receive "Command Timed Out", it means the command took >2 mins. Try a faster approach.
             7. COMPLETION: When done, reply ONLY with: TASK_COMPLETE
         """.trimIndent()
@@ -46,7 +46,7 @@ class AiAgent {
         }
 
         val jsonBody = JSONObject().apply {
-            put("model", "nvidia/nemotron-3-ultra-550b-a55b:free")
+            put("model", modelName)
             put("messages", messages)
             put("temperature", 0.1)
         }
@@ -71,10 +71,10 @@ class AiAgent {
         }
     }
 
-    suspend fun testConnection(apiKey: String): String = withContext(Dispatchers.IO) {
+    suspend fun testConnection(apiKey: String, modelName: String): String = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) return@withContext "کلید خالی است."
         val jsonBody = JSONObject().apply {
-            put("model", "nvidia/nemotron-3-ultra-550b-a55b:free")
+            put("model", modelName)
             put("messages", JSONArray().apply { put(JSONObject().put("role", "user").put("content", "Say OK")) })
             put("max_tokens", 10)
         }

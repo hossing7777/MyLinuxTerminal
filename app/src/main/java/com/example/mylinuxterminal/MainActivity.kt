@@ -76,7 +76,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// لیست مدل‌ها + گزینه Auto
 val availableModels = listOf(
     "auto" to "⚡ Auto (Orchestrator)",
     "nvidia/nemotron-3-ultra-550b-a55b:free" to "Nemotron 3 Ultra (Reasoning)",
@@ -306,12 +305,11 @@ fun TerminalScreen() {
             while (isAiRunning) {
                 step++
                 
-                // 👇 منطق تقسیم وظایف (Orchestrator)
                 if (selectedModelId == "auto") {
                     if (step == 1) {
-                        currentModel = "nvidia/nemotron-3-ultra-550b-a55b:free" // برنامه‌ریز
+                        currentModel = "nvidia/nemotron-3-ultra-550b-a55b:free"
                     } else {
-                        currentModel = "poolside/laguna-xs-2.1:free" // مجری (کدنویس)
+                        currentModel = "poolside/laguna-xs-2.1:free"
                     }
                 } else {
                     currentModel = selectedModelId
@@ -373,7 +371,6 @@ fun TerminalScreen() {
                 
                 val output = executeCommandAndWait(cleanCommand)
                 
-                // 👇 اگر خطایی رخ داد، مدل را به NVIDIA تغییر بده تا خطا را تحلیل کند
                 if (output.contains("not found") || output.contains("error") || output.contains("denied")) {
                     if (selectedModelId == "auto") {
                         agentLogs.add("⚠️ خطا شناسایی شد. تغییر خودکار مدل به NVIDIA برای تحلیل خطا...")
@@ -535,7 +532,6 @@ fun TerminalScreen() {
                             onClick = { 
                                 isTesting = true
                                 coroutineScope.launch { 
-                                    // تست روی مدل NVIDIA انجام می‌شود
                                     testResult = aiAgent.testConnection(apiKey, "nvidia/nemotron-3-ultra-550b-a55b:free")
                                     isTesting = false 
                                 } 

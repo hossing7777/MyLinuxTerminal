@@ -35,8 +35,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -114,7 +112,7 @@ val fallbackModels = listOf(
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen() {
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedTab by remember { mutableStateOf(0) }
     
     Scaffold(
         bottomBar = {
@@ -853,13 +851,21 @@ fun LocalAIScreen() {
     val context = LocalContext.current
     val ptyProcess = remember { PtyProcess() }
     
-    var isModelReady by remember { mutableStateOf(false) }
-    var isServerRunning by remember { mutableStateOf(false) }
-    var isDownloading by remember { mutableStateOf(false) }
-    var serverLog by remember { mutableStateListOf<String>() }
-    var chatHistory by remember { mutableStateListOf<Pair<String, String>>() }
-    var inputText by remember { mutableStateOf("") }
-    var isGenerating by remember { mutableStateOf(false) }
+    // 👇 استفاده از State به جای by برای جلوگیری از خطای delegate
+    val isModelReadyState = remember { mutableStateOf(false) }
+    val isServerRunningState = remember { mutableStateOf(false) }
+    val isDownloadingState = remember { mutableStateOf(false) }
+    val serverLog = remember { mutableStateListOf<String>() }
+    val chatHistory = remember { mutableStateListOf<Pair<String, String>>() }
+    val inputTextState = remember { mutableStateOf("") }
+    val isGeneratingState = remember { mutableStateOf(false) }
+    
+    val isModelReady = isModelReadyState.value
+    val isServerRunning = isServerRunningState.value
+    val isDownloading = isDownloadingState.value
+    val inputText = inputTextState.value
+    val isGenerating = isGeneratingState.value
+
     val coroutineScope = rememberCoroutineScope()
     
     val localServerUrl = "http://127.0.0.1:8000/v1/chat/completions"
@@ -867,7 +873,7 @@ fun LocalAIScreen() {
     val modelsDirPath = "/sdcard/Download/Local_AI_Models"
 
     fun startLocalModelSetup() {
-        isDownloading = true
+        isDownloadingState.value = true
         serverLog.clear()
         serverLog.add("Preparing environment...")
         serverLog.add("Looking for models in $modelsDirPath")
@@ -878,7 +884,6 @@ fun LocalAIScreen() {
             val alpinePath = File(context.filesDir, "alpine").absolutePath
             
             val scriptFile = File(context.filesDir, "local_ai_start.sh")
-            // 👇 اصلاح تداخل متغیرهای شل و کاتلین با ${'$'}
             scriptFile.writeText("""
                 #!/bin/sh
                 MODEL_DIR="$modelsDirPath"
@@ -927,14 +932,14 @@ fun LocalAIScreen() {
                     withContext(Dispatchers.Main) {
                         serverLog.add(currentLine)
                         if (currentLine.contains("::SETUP_DONE::")) {
-                            isDownloading = false
-                            isServerRunning = true
-                            isModelReady = true
+                            isDownloadingState.value = false
+                            isServerRunningState.value = true
+                            isModelReadyState.value = true
                             serverLog.add("✅ Local Model is Ready! You can chat now.")
                         }
                         if (currentLine.contains("::ERROR_NO_MODEL::")) {
-                            isDownloading = false
-                            isModelReady = false
+                            isDownloadingState.value = false
+                            isModelReadyState.value = false
                             serverLog.add("❌ خطا: هیچ مدلی پیدا نشد. لطفاً یک فایل .gguf در پوشه دانلود قرار دهید.")
                         }
                     }
@@ -943,7 +948,7 @@ fun LocalAIScreen() {
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     serverLog.add("Error: ${e.message}")
-                    isDownloading = false
+                    isDownloadingState.value = false
                 }
             }
         }
@@ -952,8 +957,8 @@ fun LocalAIScreen() {
     fun sendLocalChat(prompt: String) {
         if (prompt.isBlank()) return
         chatHistory.add("You" to prompt)
-        inputText = ""
-        isGenerating = true
+        inputTextState.value = ""
+        isGeneratingState.value = true
         
         coroutineScope.launch(Dispatchers.IO) {
             try {
@@ -979,7 +984,7 @@ fun LocalAIScreen() {
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { chatHistory.add("Error" to "Connection failed. Is the server running?") }
             } finally {
-                withContext(Dispatchers.Main) { isGenerating = false }
+                withContext(Dispatchers.Main) { isGeneratingState.value = false }
             }
         }
     }
@@ -1018,9 +1023,8 @@ fun LocalAIScreen() {
             }
         } else {
             LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                items(chatHistory) { item ->
-                    val role = item.first
-                    val msg = item.second
+                // 👇 استفاده از Destructuring برای خواندن Pair
+                items(chatHistory) { (role, msg) ->
                     val isUser = role == "You"
                     Card(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -1034,7 +1038,7 @@ fun LocalAIScreen() {
             Spacer(modifier = Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
-                    value = inputText, onValueChange = { inputText = it },
+                    value = inputText, onValueChange = { inputTextState.value = it },
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("به هوش مصنوعی لوکال پیام بدهید...") },
                     enabled = !isGenerating

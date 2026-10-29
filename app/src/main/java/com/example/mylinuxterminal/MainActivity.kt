@@ -87,7 +87,6 @@ val availableModels = listOf(
     "dots-studio/dots-3-note-preview:free" to "Dots3 Note (Vision)"
 )
 
-// 👇 لیست پشتیبان برای چرخش خودکار مدل‌ها
 val fallbackModels = listOf(
     "nvidia/nemotron-3-ultra-550b-a55b:free",
     "thinkingmachines/inkling:free",
@@ -320,18 +319,13 @@ fun TerminalScreen() {
                 
                 var currentModel = selectedModelId
                 
-                // 👇 منطق انتخاب و چرخش مدل‌ها
                 if (selectedModelId == "auto") {
-                    if (step == 1) {
-                        currentModel = "nvidia/nemotron-3-ultra-550b-a55b:free"
-                    } else {
-                        currentModel = "thinkingmachines/inkling:free"
-                    }
+                    if (step == 1) currentModel = "nvidia/nemotron-3-ultra-550b-a55b:free"
+                    else currentModel = "thinkingmachines/inkling:free"
                 } else if (selectedModelId == "parallel") {
                     currentModel = "parallel"
                 }
                 
-                // اگر در حالت چرخش (fallback) هستیم، مدل را از لیست پشتیبان انتخاب کن
                 if (fallbackIndex > 0) {
                     currentModel = fallbackModels[fallbackIndex % fallbackModels.size]
                 }
@@ -361,31 +355,41 @@ fun TerminalScreen() {
                     aiResponse = aiAgent.runAgentStep(apiKey, currentModel, history, longTermMemory)
                 }
                 
-                // 👇 اگر خطا رخ داد، مدل را عوض کن و ۵ ثانیه صبر کن، سپس حلقه را ادامه بده (بدون break)
                 if (aiResponse == "RETRY_ERROR" || aiResponse == null || aiResponse.startsWith("HTTP_ERROR")) {
                     fallbackIndex++
                     val nextModelName = fallbackModels[fallbackIndex % fallbackModels.size]
                     agentLogs.add("⚠️ خطا در مدل فعلی ($aiResponse). تغییر خودکار به مدل بعدی: $nextModelName")
                     
-                    // اگر همه مدل‌ها امتحان شدند، ۳۰ ثانیه صبر می‌کنیم تا محدودیت‌ها ریست شوند
                     if (fallbackIndex % fallbackModels.size == 0) {
                         agentLogs.add("⏳ همه مدل‌ها با خطا مواجه شدند. ۳۰ ثانیه صبر می‌کنیم...")
                         saveHistory()
                         delay(30000)
                     } else {
                         saveHistory()
-                        delay(5000) // ۵ ثانیه صبر قبل از مدل بعدی
+                        delay(5000)
                     }
-                    step-- // این مرحله را دوباره بشمار تا هدر نرود
+                    step--
                     continue
                 }
                 
-                // اگر موفق بود، fallbackIndex را ریست کن
                 fallbackIndex = 0
                 
-                if (aiResponse.trim() == "TASK_COMPLETE") {
+                // 👇 تشخیص دقیق‌تر TASK_COMPLETE
+                if (aiResponse.contains("TASK_COMPLETE", ignoreCase = true)) {
                     aiProgress = 100
                     agentLogs.add("✅ عملیات با موفقیت به پایان رسید!")
+                    saveHistory()
+                    break
+                }
+
+                // 👇 تشخیص پیام‌های رد کردن درخواست (Refusal)
+                if (aiResponse.contains("I cannot help", ignoreCase = true) || 
+                    aiResponse.contains("I am sorry", ignoreCase = true) || 
+                    aiResponse.contains("I don't have enough context", ignoreCase = true) ||
+                    aiResponse.contains("unethical", ignoreCase = true) ||
+                    aiResponse.contains("illegal", ignoreCase = true)) {
+                    agentLogs.add("⚠️ هوش مصنوعی از انجام این درخواست خودداری کرد (محدودیت اخلاقی).")
+                    agentLogs.add("پاسخ مدل: $aiResponse")
                     saveHistory()
                     break
                 }
@@ -399,9 +403,7 @@ fun TerminalScreen() {
                     cleanCommand = cleanCommand.replace(progressRegex, "").trim()
                 }
 
-                if (cleanCommand.contains("TASK_COMPLETE")) {
-                    cleanCommand = "TASK_COMPLETE"
-                } else if (cleanCommand.startsWith("{") && cleanCommand.contains("command")) {
+                if (cleanCommand.startsWith("{") && cleanCommand.contains("command")) {
                     try {
                         val jsonResponse = JSONObject(cleanCommand)
                         if (jsonResponse.has("command")) {

@@ -28,6 +28,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Settings
@@ -75,6 +76,14 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// لیست مدل‌ها + گزینه Auto
+val availableModels = listOf(
+    "auto" to "⚡ Auto (Orchestrator)",
+    "nvidia/nemotron-3-ultra-550b-a55b:free" to "Nemotron 3 Ultra (Reasoning)",
+    "poolside/laguna-xs-2.1:free" to "Laguna XS 2.1 (Coding)",
+    "dots-studio/dots-3-note-preview:free" to "Dots3 Note (Vision)"
+)
+
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun TerminalScreen() {
@@ -97,6 +106,7 @@ fun TerminalScreen() {
     var isAiRunning by remember { mutableStateOf(false) }
     var agentJob by remember { mutableStateOf<Job?>(null) }
     var aiProgress by remember { mutableStateOf(0) }
+    var activeModelName by remember { mutableStateOf("") }
     
     val agentLogs = remember { 
         val logs = mutableStateListOf<String>()
@@ -112,6 +122,9 @@ fun TerminalScreen() {
     
     val aiAgent = remember { AiAgent() }
     var apiKey by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
+    var selectedModelId by remember { mutableStateOf(prefs.getString("selected_model", "auto") ?: "auto") }
+    var showModelDropdown by remember { mutableStateOf(false) }
+    
     var isTesting by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf("") }
     
@@ -183,7 +196,7 @@ fun TerminalScreen() {
             ptyProcess.writeData("stty -echo; $command 2>&1; echo \"${terminalState.currentMarker}\"; stty echo\n")
             
             try {
-                withTimeout(120000) { // ۲ دقیقه
+                withTimeout(120000) {
                     deferred.await()
                 }
             } catch (e: TimeoutCancellationException) {
@@ -288,9 +301,24 @@ fun TerminalScreen() {
             
             var step = 0
             val maxStepsPerBatch = 30
+            var currentModel = selectedModelId
             
             while (isAiRunning) {
                 step++
+                
+                // 👇 منطق تقسیم وظایف (Orchestrator)
+                if (selectedModelId == "auto") {
+                    if (step == 1) {
+                        currentModel = "nvidia/nemotron-3-ultra-550b-a55b:free" // برنامه‌ریز
+                    } else {
+                        currentModel = "poolside/laguna-xs-2.1:free" // مجری (کدنویس)
+                    }
+                } else {
+                    currentModel = selectedModelId
+                }
+                
+                activeModelName = availableModels.find { it.first == currentModel }?.second ?: currentModel
+                
                 if (step > maxStepsPerBatch) {
                     agentLogs.add("🔄 سقف مراحل پر شد. ارسال درخواست ادامه...")
                     saveHistory()
@@ -298,18 +326,12 @@ fun TerminalScreen() {
                     step = 1
                 }
 
-                agentLogs.add("🤖 در حال فکر کردن (مرحله $step)...")
+                agentLogs.add("🤖 در حال فکر کردن (مرحله $step - مدل: ${activeModelName.take(15)}...)")
                 saveHistory()
                 
-                val aiResponse = aiAgent.runAgentStep(apiKey, history, longTermMemory)
+                val aiResponse = aiAgent.runAgentStep(apiKey, currentModel, history, longTermMemory)
                 
-                if (aiResponse == null) {
-                    agentLogs.add("❌ خطای شبکه یا ارتباط با سرور. لطفاً اینترنت را بررسی کنید.")
-                    saveHistory()
-                    break
-                }
-                
-                if (aiResponse.startsWith("HTTP_ERROR") || aiResponse == "NETWORK_ERROR") {
+                if (aiResponse == null || aiResponse.startsWith("HTTP_ERROR") || aiResponse == "NETWORK_ERROR") {
                     agentLogs.add("❌ خطای شبکه یا ارتباط با سرور. لطفاً اینترنت را بررسی کنید.")
                     saveHistory()
                     break
@@ -322,7 +344,6 @@ fun TerminalScreen() {
                     break
                 }
 
-                // 👇 در اینجا مطمئن هستیم که aiResponse دیگر null نیست
                 var cleanCommand: String = aiResponse
                 
                 val progressRegex = Regex("""\[PROGRESS:\s*(\d+)%\]""")
@@ -352,7 +373,13 @@ fun TerminalScreen() {
                 
                 val output = executeCommandAndWait(cleanCommand)
                 
-                if (!output.contains("Timed Out")) {
+                // 👇 اگر خطایی رخ داد، مدل را به NVIDIA تغییر بده تا خطا را تحلیل کند
+                if (output.contains("not found") || output.contains("error") || output.contains("denied")) {
+                    if (selectedModelId == "auto") {
+                        agentLogs.add("⚠️ خطا شناسایی شد. تغییر خودکار مدل به NVIDIA برای تحلیل خطا...")
+                        currentModel = "nvidia/nemotron-3-ultra-550b-a55b:free"
+                    }
+                } else if (!output.contains("Timed Out")) {
                     updateMemory(cleanCommand)
                 }
 
@@ -450,21 +477,77 @@ fun TerminalScreen() {
     if (showSettings) {
         AlertDialog(
             onDismissRequest = { showSettings = false },
-            title = { Text("Settings") },
+            title = { Text("Settings", color = Color.Cyan) },
             text = {
                 Column {
                     Text("Hormuz API Key:", color = Color.Cyan)
-                    OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, placeholder = { Text("ng-...") }, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation(), singleLine = true)
-                    Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Button(onClick = { prefs.edit().putString("api_key", apiKey).apply(); Toast.makeText(context, "ذخیره شد", Toast.LENGTH_SHORT).show() }, modifier = Modifier.weight(1f)) { Text("ذخیره") }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(onClick = { isTesting = true; coroutineScope.launch { testResult = aiAgent.testConnection(apiKey); isTesting = false } }, modifier = Modifier.weight(1f)) { Text("تست") }
+                    OutlinedTextField(
+                        value = apiKey, 
+                        onValueChange = { apiKey = it }, 
+                        placeholder = { Text("ng-...") }, 
+                        modifier = Modifier.fillMaxWidth(), 
+                        visualTransformation = PasswordVisualTransformation(), 
+                        singleLine = true
+                    )
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    Text("Active AI Model:", color = Color.Cyan)
+                    Box {
+                        OutlinedButton(
+                            onClick = { showModelDropdown = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                        ) {
+                            Text(availableModels.find { it.first == selectedModelId }?.second ?: "Select Model")
+                            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                        }
+                        DropdownMenu(
+                            expanded = showModelDropdown,
+                            onDismissRequest = { showModelDropdown = false },
+                            modifier = Modifier.background(Color(0xFF2A2A2A))
+                        ) {
+                            availableModels.forEach { (id, name) ->
+                                DropdownMenuItem(
+                                    text = { Text(name, color = Color.White) },
+                                    onClick = {
+                                        selectedModelId = id
+                                        prefs.edit().putString("selected_model", id).apply()
+                                        showModelDropdown = false
+                                    }
+                                )
+                            }
+                        }
                     }
-                    if (isTesting) Text("در حال تست...", color = Color.Yellow)
-                    if (testResult.isNotEmpty()) Text(testResult, color = if (testResult.contains("✅")) Color.Green else Color.Red)
+
+                    Row(modifier = Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Button(
+                            onClick = { 
+                                prefs.edit().putString("api_key", apiKey).apply()
+                                Toast.makeText(context, "ذخیره شد", Toast.LENGTH_SHORT).show() 
+                            }, 
+                            modifier = Modifier.weight(1f)
+                        ) { Text("ذخیره") }
+                        
+                        Spacer(modifier = Modifier.width(8.dp))
+                        
+                        Button(
+                            onClick = { 
+                                isTesting = true
+                                coroutineScope.launch { 
+                                    // تست روی مدل NVIDIA انجام می‌شود
+                                    testResult = aiAgent.testConnection(apiKey, "nvidia/nemotron-3-ultra-550b-a55b:free")
+                                    isTesting = false 
+                                } 
+                            }, 
+                            modifier = Modifier.weight(1f)
+                        ) { Text("تست") }
+                    }
+                    if (isTesting) Text("در حال تست...", color = Color.Yellow, modifier = Modifier.padding(top = 4.dp))
+                    if (testResult.isNotEmpty()) Text(testResult, color = if (testResult.contains("✅")) Color.Green else Color.Red, modifier = Modifier.padding(top = 4.dp))
                 }
             },
-            confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Close") } }
+            confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Close", color = Color.Cyan) } }
         )
     }
 

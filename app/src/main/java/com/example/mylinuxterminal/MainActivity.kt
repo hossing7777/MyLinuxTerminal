@@ -16,6 +16,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -29,11 +30,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Face
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -61,6 +58,8 @@ import java.io.*
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.nio.file.attribute.PosixFilePermissions
+import java.text.SimpleDateFormat
+import java.util.*
 
 class TerminalState {
     var isWaitingForCommand = false
@@ -69,6 +68,13 @@ class TerminalState {
     var commandDeferred: CompletableDeferred<String>? = null
     var ptyFd = -1
 }
+
+data class ChatSession(
+    val id: String,
+    val title: String,
+    val timestamp: Long,
+    val history: JSONArray
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -113,29 +119,23 @@ fun TerminalScreen() {
     var showSettings by remember { mutableStateOf(false) }
     
     var showAiDialog by remember { mutableStateOf(false) }
+    var showHistoryDialog by remember { mutableStateOf(false) }
     var aiPrompt by remember { mutableStateOf("") }
     var isAiRunning by remember { mutableStateOf(false) }
     var agentJob by remember { mutableStateOf<Job?>(null) }
     var aiProgress by remember { mutableStateOf(0) }
     var activeModelName by remember { mutableStateOf("") }
     
-    val agentLogs = remember { 
-        val logs = mutableStateListOf<String>()
-        val saved = prefs.getString("agent_logs", "[]")
-        try {
-            val arr = JSONArray(saved)
-            for (i in 0 until arr.length()) logs.add(arr.getString(i))
-        } catch (e: Exception) {}
-        logs
-    }
-    
-    var longTermMemory by remember { mutableStateOf(prefs.getString("lt_memory", "No successful commands yet.") ?: "") }
+    var currentChatId by remember { mutableStateOf(UUID.randomUUID().toString()) }
+    var currentHistory by remember { mutableStateOf(JSONArray()) }
+    val chatList = remember { mutableStateListOf<ChatSession>() }
+    val agentLogs = remember { mutableStateListOf<String>() }
+    var globalLessons by remember { mutableStateOf("") }
     
     val aiAgent = remember { AiAgent() }
     var apiKey by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
     var selectedModelId by remember { mutableStateOf(prefs.getString("selected_model", "auto") ?: "auto") }
     var showModelDropdown by remember { mutableStateOf(false) }
-    
     var isTesting by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf("") }
     
@@ -151,23 +151,63 @@ fun TerminalScreen() {
     var isCtrlPressed by remember { mutableStateOf(false) }
     
     val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
+    val chatsDir = remember { File(context.filesDir, "chats").apply { mkdirs() } }
+    val globalMemoryFile = remember { File(context.filesDir, "global_lessons.txt") }
+
+    fun loadAllChats() {
+        chatList.clear()
+        chatsDir.listFiles { file -> file.extension == "json" }?.forEach { file ->
+            try {
+                val content = file.readText()
+                val json = JSONObject(content)
+                chatList.add(ChatSession(
+                    id = json.getString("id"),
+                    title = json.getString("title"),
+                    timestamp = json.getLong("timestamp"),
+                    history = json.getJSONArray("history")
+                ))
+            } catch (e: Exception) { Log.e("ChatHistory", "Error loading chat", e) }
+        }
+        chatList.sortByDescending { it.timestamp }
+    }
+
+    fun saveCurrentChat() {
+        if (currentHistory.length() == 0) return
+        try {
+            val file = File(chatsDir, "$currentChatId.json")
+            val title = currentHistory.getJSONObject(0).getString("content").take(30) + "..."
+            val json = JSONObject().apply {
+                put("id", currentChatId)
+                put("title", title)
+                put("timestamp", System.currentTimeMillis())
+                put("history", currentHistory)
+            }
+            file.writeText(json.toString())
+        } catch (e: Exception) { Log.e("ChatHistory", "Error saving chat", e) }
+    }
+
+    fun loadGlobalMemory() {
+        if (globalMemoryFile.exists()) {
+            globalLessons = globalMemoryFile.readText()
+        }
+    }
+
+    fun appendToGlobalMemory(errorMsg: String, solution: String) {
+        try {
+            val entry = "Error: $errorMsg\nSolution: $solution\n---\n"
+            globalMemoryFile.appendText(entry)
+            loadGlobalMemory()
+        } catch (e: Exception) {}
+    }
+
+    LaunchedEffect(Unit) {
+        loadAllChats()
+        loadGlobalMemory()
+    }
 
     val manageStorageLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) {}
-
-    fun saveHistory() {
-        val arr = JSONArray()
-        agentLogs.forEach { arr.put(it) }
-        prefs.edit().putString("agent_logs", arr.toString()).apply()
-    }
-
-    fun updateMemory(cmd: String) {
-        if (!longTermMemory.contains(cmd)) {
-            longTermMemory += "\n- $cmd"
-            prefs.edit().putString("lt_memory", longTermMemory).apply()
-        }
-    }
 
     fun checkStoragePermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
@@ -213,14 +253,13 @@ fun TerminalScreen() {
             } catch (e: TimeoutCancellationException) {
                 terminalState.isWaitingForCommand = false
                 ptyProcess.writeData("\u0003")
-                "Command Timed Out after 2 minutes. It was too slow. Please try a faster method or mirror."
+                "Command Timed Out after 2 minutes."
             }
         }
     }
 
     fun startTerminal(packagesToInstall: List<String> = emptyList()) {
         if (terminalState.ptyFd > 0) return
-
         coroutineScope.launch(Dispatchers.IO) {
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
             val prootPath = File(nativeLibDir, "libproot.so").absolutePath
@@ -266,7 +305,6 @@ fun TerminalScreen() {
 
                         withContext(Dispatchers.Main) {
                             if (cleanText.contains("::SETUP_DONE::")) isInstalling = false
-                            
                             val lines = cleanText.split("\n")
                             for (line in lines) {
                                 if (line.isNotBlank() && !line.contains("::CMD_DONE_") && !line.contains("::SETUP_DONE::")) {
@@ -284,11 +322,7 @@ fun TerminalScreen() {
     LaunchedEffect(Unit) { 
         extractLinux(context, outputLines)
         isExtracted = true
-        if (setupDoneFile.exists()) {
-            startTerminal(emptyList())
-        } else {
-            showPackageDialog = true
-        }
+        if (setupDoneFile.exists()) startTerminal(emptyList()) else showPackageDialog = true
         checkStoragePermission()
     }
 
@@ -296,27 +330,53 @@ fun TerminalScreen() {
         agentJob?.cancel()
         sendToPty("\u0003")
         isAiRunning = false
-        agentLogs.add("🛑 عملیات توسط کاربر متوقف شد.")
-        saveHistory()
+        agentLogs.add("🛑 عملیات متوقف شد.")
+    }
+
+    fun startNewChat() {
+        saveCurrentChat() // ذخیره چت فعلی قبل از رفتن
+        currentChatId = UUID.randomUUID().toString()
+        currentHistory = JSONArray()
+        agentLogs.clear()
+        aiPrompt = ""
+        showHistoryDialog = false
+        showAiDialog = true
+    }
+
+    fun loadChat(session: ChatSession) {
+        saveCurrentChat() // ذخیره چت فعلی
+        currentChatId = session.id
+        currentHistory = session.history
+        agentLogs.clear()
+        agentLogs.add("📂 چت بارگذاری شد: ${session.title}")
+        
+        // نمایش تاریخچه چت در لاگ
+        for (i in 0 until session.history.length()) {
+            val msg = session.history.getJSONObject(i)
+            val role = if (msg.getString("role") == "user") "👤 شما" else "🤖 AI"
+            agentLogs.add("$role: ${msg.getString("content")}")
+        }
+        
+        showHistoryDialog = false
+        showAiDialog = true
     }
 
     fun runAgent(userRequest: String) {
         isAiRunning = true
         aiProgress = 0
         agentLogs.add("📝 درخواست جدید: $userRequest")
-        saveHistory()
+        
+        val userMsg = JSONObject().put("role", "user").put("content", userRequest)
+        currentHistory.put(userMsg)
+        saveCurrentChat()
         
         agentJob = coroutineScope.launch {
-            val history = JSONArray()
-            history.put(JSONObject().put("role", "user").put("content", userRequest))
-            
             var step = 0
             val maxStepsPerBatch = 30
             var fallbackIndex = 0
             
             while (isAiRunning) {
                 step++
-                
                 var currentModel = selectedModelId
                 
                 if (selectedModelId == "auto") {
@@ -326,76 +386,51 @@ fun TerminalScreen() {
                     currentModel = "parallel"
                 }
                 
-                if (fallbackIndex > 0) {
-                    currentModel = fallbackModels[fallbackIndex % fallbackModels.size]
-                }
-                
+                if (fallbackIndex > 0) currentModel = fallbackModels[fallbackIndex % fallbackModels.size]
                 activeModelName = availableModels.find { it.first == currentModel }?.second ?: currentModel
                 
                 if (step > maxStepsPerBatch) {
-                    agentLogs.add("🔄 سقف مراحل پر شد. ارسال درخواست ادامه...")
-                    saveHistory()
-                    history.put(JSONObject().put("role", "user").put("content", "System Limit Reached. Please continue the task from where you left off. Output the next command."))
+                    agentLogs.add("🔄 سقف مراحل پر شد. ادامه می‌دهیم...")
+                    currentHistory.put(JSONObject().put("role", "user").put("content", "Continue task from here."))
                     step = 1
                 }
 
-                agentLogs.add("🤖 در حال فکر کردن (مرحله $step - مدل: ${activeModelName.take(20)}...)")
-                saveHistory()
+                agentLogs.add("🤖 در حال فکر کردن (مرحله $step - ${activeModelName.take(15)})...")
                 
                 var aiResponse: String? = null
+                val memoryWithLessons = longTermMemory + "\nGLOBAL ERRORS:\n" + globalLessons
                 
                 if (currentModel == "parallel") {
-                    val modelsToRace = listOf(
-                        "nvidia/nemotron-3-ultra-550b-a55b:free",
-                        "thinkingmachines/inkling:free",
-                        "cohere/north-mini-code:free"
-                    )
-                    aiResponse = aiAgent.runParallelAgentStep(apiKey, modelsToRace, history, longTermMemory)
+                    aiResponse = aiAgent.runParallelAgentStep(apiKey, listOf("nvidia/nemotron-3-ultra-550b-a55b:free", "thinkingmachines/inkling:free", "cohere/north-mini-code:free"), currentHistory, memoryWithLessons)
                 } else {
-                    aiResponse = aiAgent.runAgentStep(apiKey, currentModel, history, longTermMemory)
+                    aiResponse = aiAgent.runAgentStep(apiKey, currentModel, currentHistory, memoryWithLessons)
                 }
                 
                 if (aiResponse == "RETRY_ERROR" || aiResponse == null || aiResponse.startsWith("HTTP_ERROR")) {
                     fallbackIndex++
                     val nextModelName = fallbackModels[fallbackIndex % fallbackModels.size]
-                    agentLogs.add("⚠️ خطا در مدل فعلی ($aiResponse). تغییر خودکار به مدل بعدی: $nextModelName")
-                    
-                    if (fallbackIndex % fallbackModels.size == 0) {
-                        agentLogs.add("⏳ همه مدل‌ها با خطا مواجه شدند. ۳۰ ثانیه صبر می‌کنیم...")
-                        saveHistory()
-                        delay(30000)
-                    } else {
-                        saveHistory()
-                        delay(5000)
-                    }
+                    agentLogs.add("⚠️ خطا. تغییر به مدل: $nextModelName")
+                    if (fallbackIndex % fallbackModels.size == 0) delay(30000) else delay(5000)
                     step--
                     continue
                 }
                 
                 fallbackIndex = 0
                 
-                // 👇 تشخیص دقیق‌تر TASK_COMPLETE
                 if (aiResponse.contains("TASK_COMPLETE", ignoreCase = true)) {
                     aiProgress = 100
                     agentLogs.add("✅ عملیات با موفقیت به پایان رسید!")
-                    saveHistory()
+                    currentHistory.put(JSONObject().put("role", "assistant").put("content", "TASK_COMPLETE"))
+                    saveCurrentChat()
                     break
                 }
 
-                // 👇 تشخیص پیام‌های رد کردن درخواست (Refusal)
-                if (aiResponse.contains("I cannot help", ignoreCase = true) || 
-                    aiResponse.contains("I am sorry", ignoreCase = true) || 
-                    aiResponse.contains("I don't have enough context", ignoreCase = true) ||
-                    aiResponse.contains("unethical", ignoreCase = true) ||
-                    aiResponse.contains("illegal", ignoreCase = true)) {
-                    agentLogs.add("⚠️ هوش مصنوعی از انجام این درخواست خودداری کرد (محدودیت اخلاقی).")
-                    agentLogs.add("پاسخ مدل: $aiResponse")
-                    saveHistory()
+                if (aiResponse.contains("I cannot help", ignoreCase = true) || aiResponse.contains("unethical", ignoreCase = true)) {
+                    agentLogs.add("⚠️ هوش مصنوعی از انجام این درخواست خودداری کرد.")
                     break
                 }
 
                 var cleanCommand: String = aiResponse
-                
                 val progressRegex = Regex("""\[PROGRESS:\s*(\d+)%\]""")
                 val match = progressRegex.find(cleanCommand)
                 if (match != null) {
@@ -406,41 +441,68 @@ fun TerminalScreen() {
                 if (cleanCommand.startsWith("{") && cleanCommand.contains("command")) {
                     try {
                         val jsonResponse = JSONObject(cleanCommand)
-                        if (jsonResponse.has("command")) {
-                            cleanCommand = jsonResponse.getString("command")
-                        }
+                        if (jsonResponse.has("command")) cleanCommand = jsonResponse.getString("command")
                     } catch (e: Exception) {}
                 }
 
-                if (cleanCommand.isEmpty()) {
-                    history.put(JSONObject().put("role", "assistant").put("content", aiResponse))
-                    history.put(JSONObject().put("role", "user").put("content", "Output was empty. Please output a valid bash command."))
-                    continue
-                }
+                if (cleanCommand.isEmpty()) continue
 
                 agentLogs.add("💻 اجرای دستور: $cleanCommand")
-                saveHistory()
+                currentHistory.put(JSONObject().put("role", "assistant").put("content", cleanCommand))
                 
                 val output = executeCommandAndWait(cleanCommand)
                 
-                if (output.contains("not found") || output.contains("error") || output.contains("denied")) {
-                    if (selectedModelId == "auto") {
-                        agentLogs.add("⚠️ خطا شناسایی شد. تغییر خودکار مدل به NVIDIA برای تحلیل خطا...")
-                        currentModel = "nvidia/nemotron-3-ultra-550b-a55b:free"
-                    }
+                // 👇 ثبت خطاها در حافظه سراسری برای یادگیری دفعات بعد
+                if (output.contains("not found") || output.contains("Permission denied")) {
+                    if (selectedModelId == "auto") currentModel = "nvidia/nemotron-3-ultra-550b-a55b:free"
+                    appendToGlobalMemory(cleanCommand, "Failed with error: ${output.take(50)}. Hint: Use apk or check permissions.")
                 } else if (!output.contains("Timed Out")) {
                     updateMemory(cleanCommand)
                 }
 
                 val displayOutput = if (output.isBlank()) "(بدون خروجی)" else output
-                agentLogs.add("📄 خروجی ترمینال:\n$displayOutput")
-                saveHistory()
+                agentLogs.add("📄 خروجی:\n$displayOutput")
                 
-                history.put(JSONObject().put("role", "assistant").put("content", aiResponse))
-                history.put(JSONObject().put("role", "user").put("content", "The command output was:\n$output\n\nWhat is the next command? If the task is complete, output TASK_COMPLETE."))
+                currentHistory.put(JSONObject().put("role", "user").put("content", "Output: $output\nNext command?"))
+                saveCurrentChat()
             }
             isAiRunning = false
         }
+    }
+
+    if (showHistoryDialog) {
+        AlertDialog(
+            onDismissRequest = { showHistoryDialog = false },
+            containerColor = Color(0xFF1E1E1E),
+            title = { Text("📁 Chat History", color = Color.Cyan) },
+            text = {
+                Column {
+                    Button(
+                        onClick = { startNewChat() },
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006600))
+                    ) { Text("➕ New Chat (چت جدید)") }
+                    
+                    LazyColumn(modifier = Modifier.height(300.dp)) {
+                        items(chatList) { session ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { loadChat(session) },
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A))
+                            ) {
+                                Column(modifier = Modifier.padding(8.dp)) {
+                                    Text(session.title, color = Color.White, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(session.timestamp)),
+                                        color = Color.Gray, fontSize = 10.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showHistoryDialog = false }) { Text("Close") } }
+        )
     }
 
     if (showAiDialog) {
@@ -449,10 +511,16 @@ fun TerminalScreen() {
             containerColor = Color(0xFF1E1E1E),
             shape = RoundedCornerShape(16.dp),
             title = { 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Face, contentDescription = "AI", tint = Color.Cyan, modifier = Modifier.size(28.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("AI Agent", color = Color.Cyan, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Face, contentDescription = "AI", tint = Color.Cyan, modifier = Modifier.size(28.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("AI Agent", color = Color.Cyan, fontWeight = FontWeight.Bold)
+                    }
+                    // 👇 دکمه تاریخچه
+                    IconButton(onClick = { showHistoryDialog = true }) {
+                        Icon(Icons.Default.History, contentDescription = "History", tint = Color.White)
+                    }
                 }
             },
             text = {
@@ -493,14 +561,14 @@ fun TerminalScreen() {
                     Spacer(modifier = Modifier.height(16.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("گزارش زنده:", color = Color.LightGray, fontSize = 12.sp)
-                        TextButton(onClick = { agentLogs.clear(); saveHistory() }) { Text("پاک کردن", color = Color.Red, fontSize = 12.sp) }
+                        TextButton(onClick = { agentLogs.clear() }) { Text("پاک کردن", color = Color.Red, fontSize = 12.sp) }
                     }
                     LazyColumn(modifier = Modifier.height(220.dp).fillMaxWidth().background(Color.Black, RoundedCornerShape(8.dp)).padding(8.dp)) {
                         items(agentLogs) { log -> Text(log, color = Color(0xFF00FF00), fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(bottom = 4.dp)) }
                     }
                 }
             },
-            confirmButton = { if (!isAiRunning) TextButton(onClick = { showAiDialog = false }) { Text("بستن", color = Color.Cyan) } }
+            confirmButton = { if (!isAiRunning) TextButton(onClick = { saveCurrentChat(); showAiDialog = false }) { Text("بستن", color = Color.Cyan) } }
         )
     }
 

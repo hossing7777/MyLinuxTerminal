@@ -2,6 +2,7 @@ package com.example.mylinuxterminal
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll // 👈 این خط اضافه شد
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.*
@@ -76,7 +77,7 @@ class AiAgent {
         }
     }
 
-    // 👇 تابع جدید: ارسال همزمان به چند مدل (Parallel Mode)
+    // 👇 ارسال همزمان به چند مدل (Parallel Mode)
     suspend fun runParallelAgentStep(apiKey: String, models: List<String>, history: JSONArray, memory: String): String? = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) return@withContext "Error: API Key is missing."
 
@@ -87,14 +88,13 @@ class AiAgent {
                 }
             }
             
-            val results = deferredResponses.awaitAll()
+            // 👇 استفاده از awaitAll با ایمپورت صحیح
+            val results: List<String?> = deferredResponses.awaitAll()
             
-            // بهترین پاسخ را انتخاب می‌کنیم (پاسخی که RETRY_ERROR یا null نباشد)
-            val validResponse = results.firstOrNull { 
-                it != null && it != "RETRY_ERROR" && !it.startsWith("HTTP_ERROR") && it != "TASK_COMPLETE" 
+            val validResponse = results.firstOrNull { response ->
+                response != null && response != "RETRY_ERROR" && !response.startsWith("HTTP_ERROR") && response != "TASK_COMPLETE"
             }
             
-            // اگر هیچ کدام پاسخ معتبری ندادند، شاید همه گفتند TASK_COMPLETE
             if (validResponse == null && results.any { it == "TASK_COMPLETE" }) {
                 return@coroutineScope "TASK_COMPLETE"
             }

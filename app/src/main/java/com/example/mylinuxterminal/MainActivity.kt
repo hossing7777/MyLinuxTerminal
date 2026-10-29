@@ -227,7 +227,7 @@ fun TerminalScreen() {
     }
 
     LaunchedEffect(Unit) {
-        requestAllHardwarePermissions()
+        // requestAllHardwarePermissions() // غیرفعال شد تا پیغام ندهد
         loadAllChats()
         loadGlobalMemory()
     }

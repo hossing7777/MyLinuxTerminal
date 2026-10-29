@@ -1,6 +1,8 @@
 package com.example.mylinuxterminal
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -18,10 +20,8 @@ class AiAgent {
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    suspend fun runAgentStep(apiKey: String, modelName: String, history: JSONArray, memory: String): String? = withContext(Dispatchers.IO) {
-        if (apiKey.isBlank()) return@withContext "Error: API Key is missing."
-
-        val systemPrompt = """
+    private fun getSystemPrompt(memory: String): String {
+        return """
             You are an autonomous AI Linux Agent inside an Android app running Alpine Linux.
             
             MEMORY OF PREVIOUS SUCCESSFUL COMMANDS:
@@ -36,9 +36,13 @@ class AiAgent {
             6. TIMEOUT: If you receive "Command Timed Out", it means the command took >2 mins. Try a faster approach.
             7. COMPLETION: When done, reply ONLY with: TASK_COMPLETE
         """.trimIndent()
+    }
+
+    suspend fun runAgentStep(apiKey: String, modelName: String, history: JSONArray, memory: String): String? = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) return@withContext "Error: API Key is missing."
 
         val messages = JSONArray().apply {
-            put(JSONObject().put("role", "system").put("content", systemPrompt))
+            put(JSONObject().put("role", "system").put("content", getSystemPrompt(memory)))
             val startIndex = maxOf(0, history.length() - 15)
             for (i in startIndex until history.length()) {
                 put(history.get(i))
@@ -61,19 +65,41 @@ class AiAgent {
 
         try {
             client.newCall(request).execute().use { response ->
-                // 👇 اگر خطای Rate Limit (429) یا خطای سرور (500+) بود، پیام خاص بده
-                if (response.code == 429 || response.code >= 500) {
-                    return@withContext "RETRY_ERROR"
-                }
+                if (response.code == 429 || response.code >= 500) return@withContext "RETRY_ERROR"
                 if (!response.isSuccessful) return@withContext "HTTP_ERROR_${response.code}"
-                
                 val responseData = response.body?.string() ?: return@withContext null
                 val jsonObject = JSONObject(responseData)
                 return@withContext jsonObject.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content").trim()
             }
         } catch (e: IOException) {
-            // 👇 خطاهای شبکه (مثل قطعی موقت) هم شامل تلاش مجدد می‌شوند
             return@withContext "RETRY_ERROR"
+        }
+    }
+
+    // 👇 تابع جدید: ارسال همزمان به چند مدل (Parallel Mode)
+    suspend fun runParallelAgentStep(apiKey: String, models: List<String>, history: JSONArray, memory: String): String? = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) return@withContext "Error: API Key is missing."
+
+        coroutineScope {
+            val deferredResponses = models.map { modelName ->
+                async(Dispatchers.IO) {
+                    runAgentStep(apiKey, modelName, history, memory)
+                }
+            }
+            
+            val results = deferredResponses.awaitAll()
+            
+            // بهترین پاسخ را انتخاب می‌کنیم (پاسخی که RETRY_ERROR یا null نباشد)
+            val validResponse = results.firstOrNull { 
+                it != null && it != "RETRY_ERROR" && !it.startsWith("HTTP_ERROR") && it != "TASK_COMPLETE" 
+            }
+            
+            // اگر هیچ کدام پاسخ معتبری ندادند، شاید همه گفتند TASK_COMPLETE
+            if (validResponse == null && results.any { it == "TASK_COMPLETE" }) {
+                return@coroutineScope "TASK_COMPLETE"
+            }
+            
+            return@coroutineScope validResponse ?: "RETRY_ERROR"
         }
     }
 
@@ -88,7 +114,7 @@ class AiAgent {
         val request = Request.Builder().url(endpoint).addHeader("Authorization", "Bearer $apiKey").post(requestBody).build()
         try {
             client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) return@withContext "✅ اتصال با موفقیت برقرار شد."
+                if (response.isSuccessful) return@withContext "✅ اتصال برقرار شد."
                 else return@withContext "❌ خطای سرور: ${response.code}"
             }
         } catch (e: IOException) {

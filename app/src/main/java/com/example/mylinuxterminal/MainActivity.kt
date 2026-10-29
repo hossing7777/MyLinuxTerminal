@@ -76,10 +76,14 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// 👇 لیست کامل مدل‌های رایگان شما
 val availableModels = listOf(
     "auto" to "⚡ Auto (Orchestrator)",
+    "parallel" to "🚀 Parallel (Race 3 Models)",
     "nvidia/nemotron-3-ultra-550b-a55b:free" to "Nemotron 3 Ultra (Reasoning)",
-    "poolside/laguna-xs-2.1:free" to "Laguna XS 2.1 (Coding)",
+    "thinkingmachines/inkling:free" to "Inkling (Coding/Agent)",
+    "cohere/north-mini-code:free" to "Cohere North (Light Code)",
+    "nvidia/nemotron-3.5-lightning:free" to "Nemotron 3.5 (Fast Agent)",
     "dots-studio/dots-3-note-preview:free" to "Dots3 Note (Vision)"
 )
 
@@ -309,8 +313,10 @@ fun TerminalScreen() {
                     if (step == 1) {
                         currentModel = "nvidia/nemotron-3-ultra-550b-a55b:free"
                     } else {
-                        currentModel = "poolside/laguna-xs-2.1:free"
+                        currentModel = "thinkingmachines/inkling:free"
                     }
+                } else if (selectedModelId == "parallel") {
+                    currentModel = "parallel"
                 } else {
                     currentModel = selectedModelId
                 }
@@ -324,22 +330,30 @@ fun TerminalScreen() {
                     step = 1
                 }
 
-                // 👇 منطق تلاش مجدد (Retry Logic)
                 var retryCount = 0
                 var success = false
                 var aiResponse: String? = null
 
                 while (!success && retryCount < 5 && isAiRunning) {
-                    agentLogs.add("🤖 در حال فکر کردن (مرحله $step - مدل: ${activeModelName.take(15)}...)")
+                    agentLogs.add("🤖 در حال فکر کردن (مرحله $step - مدل: ${activeModelName.take(20)}...)")
                     saveHistory()
                     
-                    aiResponse = aiAgent.runAgentStep(apiKey, currentModel, history, longTermMemory)
+                    if (currentModel == "parallel") {
+                        val modelsToRace = listOf(
+                            "nvidia/nemotron-3-ultra-550b-a55b:free",
+                            "thinkingmachines/inkling:free",
+                            "cohere/north-mini-code:free"
+                        )
+                        aiResponse = aiAgent.runParallelAgentStep(apiKey, modelsToRace, history, longTermMemory)
+                    } else {
+                        aiResponse = aiAgent.runAgentStep(apiKey, currentModel, history, longTermMemory)
+                    }
                     
                     if (aiResponse == "RETRY_ERROR") {
                         retryCount++
-                        agentLogs.add("⏳ محدودیت درخواست (Rate Limit) یا خطای موقت شبکه. تلاش مجدد $retryCount/5 پس از ۱۵ ثانیه...")
+                        agentLogs.add("⏳ محدودیت درخواست یا خطای شبکه. تلاش مجدد $retryCount/5 پس از ۱۵ ثانیه...")
                         saveHistory()
-                        delay(15000) // 15 ثانیه صبر می‌کنیم
+                        delay(15000)
                     } else {
                         success = true
                     }
@@ -524,7 +538,7 @@ fun TerminalScreen() {
                         DropdownMenu(
                             expanded = showModelDropdown,
                             onDismissRequest = { showModelDropdown = false },
-                            modifier = Modifier.background(Color(0xFF2A2A2A))
+                            modifier = Modifier.background(Color(0xFF2A2A2A)).heightIn(max = 300.dp)
                         ) {
                             availableModels.forEach { (id, name) ->
                                 DropdownMenuItem(

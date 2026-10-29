@@ -248,11 +248,12 @@ fun TerminalScreen() {
         if (currentHistory.length() == 0) return
         try {
             val file = File(chatsDir, "$currentChatId.json")
-            val title = currentHistory.getJSONObject(0).getString("content").take(30) + "..."
+            val title = if (currentHistory.length() > 0) currentHistory.getJSONObject(0).getString("content").take(30) + "..." else "New Chat"
             val json = JSONObject().apply {
                 put("id", currentChatId); put("title", title); put("timestamp", System.currentTimeMillis()); put("history", currentHistory)
             }
             file.writeText(json.toString())
+            loadAllChats()
         } catch (e: Exception) {}
     }
 
@@ -442,7 +443,7 @@ fun TerminalScreen() {
     LaunchedEffect(Unit) { 
         extractLinux(context, outputLines)
         isExtracted = true
-        if (setupDoneFile.exists()) startTerminal(emptyList()) else showPackageDialog = true
+        if (setupDoneFile.exists() || prefs.getBoolean("skip_setup", false)) startTerminal(emptyList()) else showPackageDialog = true
         checkStoragePermission()
     }
 
@@ -644,7 +645,7 @@ fun TerminalScreen() {
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("AI Agent", color = Color.Cyan, fontWeight = FontWeight.Bold)
                     }
-                    IconButton(onClick = { showHistoryDialog = true }) {
+                    IconButton(onClick = { loadAllChats(); showHistoryDialog = true }) {
                         Icon(Icons.Default.List, contentDescription = "History", tint = Color.White)
                     }
                 }
@@ -713,7 +714,7 @@ fun TerminalScreen() {
                 }
             },
             confirmButton = { Button(onClick = { showPackageDialog = false; isInstalling = true; startTerminal(selectedPackages.toList()) }) { Text("Install") } },
-            dismissButton = { TextButton(onClick = { showPackageDialog = false; startTerminal(emptyList()) }) { Text("Skip") } }
+            dismissButton = { TextButton(onClick = { setupDoneFile.parentFile?.mkdirs(); setupDoneFile.createNewFile(); prefs.edit().putBoolean("skip_setup", true).apply(); showPackageDialog = false; startTerminal(emptyList()) }) { Text("Skip") } }
         )
     }
 
@@ -937,6 +938,7 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
                         if (currentLine.contains("::PROGRESS:")) {
                             val prog = currentLine.substringAfter("::PROGRESS:").substringBefore("::").toFloatOrNull() ?: 0f
                             state.progress = prog / 100f
+                            state.serverLog.add("📊 Progress: ${prog.toInt()}%")
                         }
                         if (currentLine.contains("::SETUP_DONE::")) {
                             state.isDownloading = false
@@ -1023,7 +1025,7 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("در حال آماده‌سازی...")
+                        Text("در حال آماده‌سازی... (${(state.progress * 100).toInt()}%)")
                     }
                 } else {
                     Text("شروع / بررسی مدل (Start Server)")

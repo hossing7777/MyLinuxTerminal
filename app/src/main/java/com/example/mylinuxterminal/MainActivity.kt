@@ -27,7 +27,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll // 👈 اضافه شد
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
@@ -85,6 +85,15 @@ val availableModels = listOf(
     "cohere/north-mini-code:free" to "Cohere North (Light Code)",
     "nvidia/nemotron-3.5-lightning:free" to "Nemotron 3.5 (Fast Agent)",
     "dots-studio/dots-3-note-preview:free" to "Dots3 Note (Vision)"
+)
+
+// 👇 لیست پشتیبان برای چرخش خودکار مدل‌ها
+val fallbackModels = listOf(
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "thinkingmachines/inkling:free",
+    "cohere/north-mini-code:free",
+    "nvidia/nemotron-3.5-lightning:free",
+    "dots-studio/dots-3-note-preview:free"
 )
 
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
@@ -304,11 +313,14 @@ fun TerminalScreen() {
             
             var step = 0
             val maxStepsPerBatch = 30
-            var currentModel = selectedModelId
+            var fallbackIndex = 0
             
             while (isAiRunning) {
                 step++
                 
+                var currentModel = selectedModelId
+                
+                // 👇 منطق انتخاب و چرخش مدل‌ها
                 if (selectedModelId == "auto") {
                     if (step == 1) {
                         currentModel = "nvidia/nemotron-3-ultra-550b-a55b:free"
@@ -317,8 +329,11 @@ fun TerminalScreen() {
                     }
                 } else if (selectedModelId == "parallel") {
                     currentModel = "parallel"
-                } else {
-                    currentModel = selectedModelId
+                }
+                
+                // اگر در حالت چرخش (fallback) هستیم، مدل را از لیست پشتیبان انتخاب کن
+                if (fallbackIndex > 0) {
+                    currentModel = fallbackModels[fallbackIndex % fallbackModels.size]
                 }
                 
                 activeModelName = availableModels.find { it.first == currentModel }?.second ?: currentModel
@@ -330,48 +345,45 @@ fun TerminalScreen() {
                     step = 1
                 }
 
-                var retryCount = 0
-                var success = false
+                agentLogs.add("🤖 در حال فکر کردن (مرحله $step - مدل: ${activeModelName.take(20)}...)")
+                saveHistory()
+                
                 var aiResponse: String? = null
-
-                while (!success && retryCount < 5 && isAiRunning) {
-                    agentLogs.add("🤖 در حال فکر کردن (مرحله $step - مدل: ${activeModelName.take(20)}...)")
-                    saveHistory()
+                
+                if (currentModel == "parallel") {
+                    val modelsToRace = listOf(
+                        "nvidia/nemotron-3-ultra-550b-a55b:free",
+                        "thinkingmachines/inkling:free",
+                        "cohere/north-mini-code:free"
+                    )
+                    aiResponse = aiAgent.runParallelAgentStep(apiKey, modelsToRace, history, longTermMemory)
+                } else {
+                    aiResponse = aiAgent.runAgentStep(apiKey, currentModel, history, longTermMemory)
+                }
+                
+                // 👇 اگر خطا رخ داد، مدل را عوض کن و ۵ ثانیه صبر کن، سپس حلقه را ادامه بده (بدون break)
+                if (aiResponse == "RETRY_ERROR" || aiResponse == null || aiResponse.startsWith("HTTP_ERROR")) {
+                    fallbackIndex++
+                    val nextModelName = fallbackModels[fallbackIndex % fallbackModels.size]
+                    agentLogs.add("⚠️ خطا در مدل فعلی ($aiResponse). تغییر خودکار به مدل بعدی: $nextModelName")
                     
-                    if (currentModel == "parallel") {
-                        val modelsToRace = listOf(
-                            "nvidia/nemotron-3-ultra-550b-a55b:free",
-                            "thinkingmachines/inkling:free",
-                            "cohere/north-mini-code:free"
-                        )
-                        aiResponse = aiAgent.runParallelAgentStep(apiKey, modelsToRace, history, longTermMemory)
-                    } else {
-                        aiResponse = aiAgent.runAgentStep(apiKey, currentModel, history, longTermMemory)
-                    }
-                    
-                    if (aiResponse == "RETRY_ERROR") {
-                        retryCount++
-                        agentLogs.add("⏳ محدودیت درخواست یا خطای شبکه. تلاش مجدد $retryCount/5 پس از ۱۵ ثانیه...")
+                    // اگر همه مدل‌ها امتحان شدند، ۳۰ ثانیه صبر می‌کنیم تا محدودیت‌ها ریست شوند
+                    if (fallbackIndex % fallbackModels.size == 0) {
+                        agentLogs.add("⏳ همه مدل‌ها با خطا مواجه شدند. ۳۰ ثانیه صبر می‌کنیم...")
                         saveHistory()
-                        delay(15000)
+                        delay(30000)
                     } else {
-                        success = true
+                        saveHistory()
+                        delay(5000) // ۵ ثانیه صبر قبل از مدل بعدی
                     }
-                }
-
-                if (!success || aiResponse == null) {
-                    agentLogs.add("❌ تعداد تلاش‌ها به پایان رسید یا ارتباط قطع شد. لطفاً بعداً امتحان کنید.")
-                    saveHistory()
-                    break
+                    step-- // این مرحله را دوباره بشمار تا هدر نرود
+                    continue
                 }
                 
-                if (aiResponse.startsWith("HTTP_ERROR")) {
-                    agentLogs.add("❌ خطای سرور: $aiResponse")
-                    saveHistory()
-                    break
-                }
+                // اگر موفق بود، fallbackIndex را ریست کن
+                fallbackIndex = 0
                 
-                if (aiResponse == "TASK_COMPLETE") {
+                if (aiResponse.trim() == "TASK_COMPLETE") {
                     aiProgress = 100
                     agentLogs.add("✅ عملیات با موفقیت به پایان رسید!")
                     saveHistory()
@@ -387,8 +399,9 @@ fun TerminalScreen() {
                     cleanCommand = cleanCommand.replace(progressRegex, "").trim()
                 }
 
-                if (cleanCommand.contains("TASK_COMPLETE")) { cleanCommand = "TASK_COMPLETE" }
-                else if (cleanCommand.startsWith("{") && cleanCommand.contains("command")) {
+                if (cleanCommand.contains("TASK_COMPLETE")) {
+                    cleanCommand = "TASK_COMPLETE"
+                } else if (cleanCommand.startsWith("{") && cleanCommand.contains("command")) {
                     try {
                         val jsonResponse = JSONObject(cleanCommand)
                         if (jsonResponse.has("command")) {
@@ -441,10 +454,8 @@ fun TerminalScreen() {
                 }
             },
             text = {
-                // 👇 کل محتوای پنجره چت حالا اسکرول‌شونده است
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     if (!isAiRunning) {
-                        // 👇 کادر متنی حالا حداکثر ارتفاع دارد
                         OutlinedTextField(
                             value = aiPrompt,
                             onValueChange = { aiPrompt = it },

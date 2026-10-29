@@ -2,7 +2,7 @@ package com.example.mylinuxterminal
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll // 👈 این خط اضافه شد
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.*
@@ -31,8 +31,8 @@ class AiAgent {
             CRITICAL RULES:
             1. RAW COMMANDS ONLY: You MUST output ONLY the exact raw bash/linux command. DO NOT output JSON. DO NOT output descriptions. DO NOT output markdown.
             2. PROGRESS TAG: Before EVERY command you output, prepend your estimated completion percentage like this: [PROGRESS: X%] (e.g., [PROGRESS: 25%] mkdir test).
-            3. AUTO-INSTALL: If a command fails with "not found", install it using `apk add <package_name>`. If slow, use a mirror: `sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && apk update`.
-            4. PYTHON PACKAGES: If missing, use `pip install --break-system-packages <module>` or use Tsinghua mirror.
+            3. ALPINE PACKAGES (VERY IMPORTANT): If you need a Python library (like requests or pillow), ALWAYS try to install it using Alpine's package manager first: `apk add py3-requests` or `apk add py3-pillow`. Only use pip if the package is not available in apk.
+            4. NETWORKING TOOLS: If you need `curl` or `wget`, you MUST install them first using `apk add curl` or `apk add wget`.
             5. NOEXEC MOUNT: The /sdcard directory is mounted as "noexec". You CANNOT execute .sh scripts directly using `./script.sh`. You MUST run them using `sh script.sh`.
             6. TIMEOUT: If you receive "Command Timed Out", it means the command took >2 mins. Try a faster approach.
             7. COMPLETION: When done, reply ONLY with: TASK_COMPLETE
@@ -77,7 +77,6 @@ class AiAgent {
         }
     }
 
-    // 👇 ارسال همزمان به چند مدل (Parallel Mode)
     suspend fun runParallelAgentStep(apiKey: String, models: List<String>, history: JSONArray, memory: String): String? = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) return@withContext "Error: API Key is missing."
 
@@ -88,7 +87,6 @@ class AiAgent {
                 }
             }
             
-            // 👇 استفاده از awaitAll با ایمپورت صحیح
             val results: List<String?> = deferredResponses.awaitAll()
             
             val validResponse = results.firstOrNull { response ->

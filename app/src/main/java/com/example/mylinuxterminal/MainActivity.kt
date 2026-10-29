@@ -387,7 +387,8 @@ fun TerminalScreen() {
                     cleanCommand = cleanCommand.replace(progressRegex, "").trim()
                 }
 
-                if (cleanCommand.startsWith("{") && cleanCommand.contains("command")) {
+                if (cleanCommand.contains("TASK_COMPLETE")) { cleanCommand = "TASK_COMPLETE" }
+                else if (cleanCommand.startsWith("{") && cleanCommand.contains("command")) {
                     try {
                         val jsonResponse = JSONObject(cleanCommand)
                         if (jsonResponse.has("command")) {

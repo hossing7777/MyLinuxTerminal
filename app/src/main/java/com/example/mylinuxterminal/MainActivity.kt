@@ -917,11 +917,13 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
             val tmpDir = File(context.cacheDir, "proot_tmp").absolutePath
             File(tmpDir).mkdirs()
             
+            val hostFilesDir = context.filesDir.absolutePath
             val pb = ProcessBuilder(
                 prootPath, "--kill-on-exit", "--link2symlink", "--sysvipc", "-0",
                 "-r", alpinePath, "-w", "/", "-b", "/dev", "-b", "/proc", "-b", "/sys",
                 "-b", "/storage/emulated/0:/sdcard",
-                "/bin/sh", scriptFile.absolutePath
+                "-b", "$hostFilesDir:/host_files",
+                "/bin/sh", "/host_files/local_ai_start.sh"
             )
             
             pb.redirectErrorStream(true)

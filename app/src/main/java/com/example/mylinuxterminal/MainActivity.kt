@@ -130,6 +130,9 @@ fun TerminalScreen() {
     var currentHistory by remember { mutableStateOf(JSONArray()) }
     val chatList = remember { mutableStateListOf<ChatSession>() }
     val agentLogs = remember { mutableStateListOf<String>() }
+    
+    // 👇 تعریف متغیرهای حافظه (این‌ها جا افتاده بودند)
+    var longTermMemory by remember { mutableStateOf(prefs.getString("lt_memory", "No successful commands yet.") ?: "") }
     var globalLessons by remember { mutableStateOf("") }
     
     val aiAgent = remember { AiAgent() }
@@ -198,6 +201,14 @@ fun TerminalScreen() {
             globalMemoryFile.appendText(entry)
             loadGlobalMemory()
         } catch (e: Exception) {}
+    }
+
+    // 👇 تعریف تابع updateMemory که جا افتاده بود
+    fun updateMemory(cmd: String) {
+        if (!longTermMemory.contains(cmd)) {
+            longTermMemory += "\n- $cmd"
+            prefs.edit().putString("lt_memory", longTermMemory).apply()
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -334,7 +345,7 @@ fun TerminalScreen() {
     }
 
     fun startNewChat() {
-        saveCurrentChat() // ذخیره چت فعلی قبل از رفتن
+        saveCurrentChat() 
         currentChatId = UUID.randomUUID().toString()
         currentHistory = JSONArray()
         agentLogs.clear()
@@ -344,13 +355,12 @@ fun TerminalScreen() {
     }
 
     fun loadChat(session: ChatSession) {
-        saveCurrentChat() // ذخیره چت فعلی
+        saveCurrentChat() 
         currentChatId = session.id
         currentHistory = session.history
         agentLogs.clear()
         agentLogs.add("📂 چت بارگذاری شد: ${session.title}")
         
-        // نمایش تاریخچه چت در لاگ
         for (i in 0 until session.history.length()) {
             val msg = session.history.getJSONObject(i)
             val role = if (msg.getString("role") == "user") "👤 شما" else "🤖 AI"
@@ -452,7 +462,6 @@ fun TerminalScreen() {
                 
                 val output = executeCommandAndWait(cleanCommand)
                 
-                // 👇 ثبت خطاها در حافظه سراسری برای یادگیری دفعات بعد
                 if (output.contains("not found") || output.contains("Permission denied")) {
                     if (selectedModelId == "auto") currentModel = "nvidia/nemotron-3-ultra-550b-a55b:free"
                     appendToGlobalMemory(cleanCommand, "Failed with error: ${output.take(50)}. Hint: Use apk or check permissions.")
@@ -517,9 +526,9 @@ fun TerminalScreen() {
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("AI Agent", color = Color.Cyan, fontWeight = FontWeight.Bold)
                     }
-                    // 👇 دکمه تاریخچه
+                    // 👇 آیکون لیست استاندارد
                     IconButton(onClick = { showHistoryDialog = true }) {
-                        Icon(Icons.Default.History, contentDescription = "History", tint = Color.White)
+                        Icon(Icons.Default.List, contentDescription = "History", tint = Color.White)
                     }
                 }
             },

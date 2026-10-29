@@ -367,7 +367,8 @@ fun TerminalScreen() {
                 }
                 
                 executeCommandAndWait("mkdir -p /sdcard/Download/Local_AI_Models/Library_Cache/apk 2>/dev/null")
-                var installOutput = executeCommandAndWait("apk add --cache-dir=/sdcard/Download/Local_AI_Models/Library_Cache/apk $pkgToInstall 2>&1")
+                val healScript = "CACHE=/sdcard/Download/Local_AI_Models/Library_Cache/apk ; if ls \$CACHE/$pkgToInstall-*.apk >/dev/null 2>&1; then echo '📦 [Local Cache] Installing $pkgToInstall from local storage...' ; apk add --cache-dir=\$CACHE --allow-untrusted $pkgToInstall 2>&1 ; else echo '🌐 [Internet] Downloading and installing $pkgToInstall...' ; apk add --cache-dir=\$CACHE $pkgToInstall 2>&1 ; fi"
+                var installOutput = executeCommandAndWait(healScript)
                 
                 if (installOutput.contains("temporary error", ignoreCase = true) || installOutput.contains("error", ignoreCase = true)) {
                     coroutineScope.launch(Dispatchers.Main) {
@@ -395,11 +396,15 @@ fun TerminalScreen() {
             val tmpDir = File(context.cacheDir, "proot_tmp").absolutePath
             File(tmpDir).mkdirs()
             
-            val initialCmd = if (!setupDoneFile.exists() && packagesToInstall.isNotEmpty()) {
-                "mkdir -p /sdcard/Download/Local_AI_Models/Library_Cache/apk; CACHE=/sdcard/Download/Local_AI_Models/Library_Cache/apk; apk add --cache-dir=\$CACHE bash net-tools procps ${packagesToInstall.joinToString(" ")} && touch /.setup_done && echo '::SETUP_DONE::'"
+            val installFunc = "install_pkg() { PKG=\$1 ; if apk info -e \$PKG >/dev/null 2>&1; then return; fi ; if ls \$CACHE/\$PKG-*.apk >/dev/null 2>&1; then echo \"📦 [Local Cache] Installing \$PKG from local storage...\" ; apk add --cache-dir=\$CACHE --allow-untrusted \$PKG ; else echo \"🌐 [Internet] Downloading and installing \$PKG...\" ; apk add --cache-dir=\$CACHE \$PKG ; fi ; }"
+            
+            val setupPart = if (!setupDoneFile.exists() && packagesToInstall.isNotEmpty()) {
+                packagesToInstall.joinToString(" ; ") { "install_pkg $it" } + " ; touch /.setup_done"
             } else {
-                "mkdir -p /sdcard/Download/Local_AI_Models/Library_Cache/apk; CACHE=/sdcard/Download/Local_AI_Models/Library_Cache/apk; apk info -e bash || apk add --cache-dir=\$CACHE bash; apk info -e net-tools || apk add --cache-dir=\$CACHE net-tools; apk info -e procps || apk add --cache-dir=\$CACHE procps; echo '::SETUP_DONE::'"
+                ""
             }
+
+            val initialCmd = "mkdir -p /sdcard/Download/Local_AI_Models/Library_Cache/apk ; CACHE=/sdcard/Download/Local_AI_Models/Library_Cache/apk ; $installFunc ; install_pkg bash ; install_pkg net-tools ; install_pkg procps ; $setupPart ; echo '::SETUP_DONE::'"
 
             val scriptFile = File(context.filesDir, "start.sh")
             scriptFile.writeText("""

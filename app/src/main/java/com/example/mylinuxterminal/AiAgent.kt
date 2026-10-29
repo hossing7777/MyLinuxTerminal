@@ -61,13 +61,19 @@ class AiAgent {
 
         try {
             client.newCall(request).execute().use { response ->
+                // 👇 اگر خطای Rate Limit (429) یا خطای سرور (500+) بود، پیام خاص بده
+                if (response.code == 429 || response.code >= 500) {
+                    return@withContext "RETRY_ERROR"
+                }
                 if (!response.isSuccessful) return@withContext "HTTP_ERROR_${response.code}"
+                
                 val responseData = response.body?.string() ?: return@withContext null
                 val jsonObject = JSONObject(responseData)
                 return@withContext jsonObject.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content").trim()
             }
         } catch (e: IOException) {
-            return@withContext "NETWORK_ERROR"
+            // 👇 خطاهای شبکه (مثل قطعی موقت) هم شامل تلاش مجدد می‌شوند
+            return@withContext "RETRY_ERROR"
         }
     }
 

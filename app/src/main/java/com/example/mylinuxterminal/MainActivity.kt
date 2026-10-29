@@ -324,13 +324,35 @@ fun TerminalScreen() {
                     step = 1
                 }
 
-                agentLogs.add("🤖 در حال فکر کردن (مرحله $step - مدل: ${activeModelName.take(15)}...)")
-                saveHistory()
+                // 👇 منطق تلاش مجدد (Retry Logic)
+                var retryCount = 0
+                var success = false
+                var aiResponse: String? = null
+
+                while (!success && retryCount < 5 && isAiRunning) {
+                    agentLogs.add("🤖 در حال فکر کردن (مرحله $step - مدل: ${activeModelName.take(15)}...)")
+                    saveHistory()
+                    
+                    aiResponse = aiAgent.runAgentStep(apiKey, currentModel, history, longTermMemory)
+                    
+                    if (aiResponse == "RETRY_ERROR") {
+                        retryCount++
+                        agentLogs.add("⏳ محدودیت درخواست (Rate Limit) یا خطای موقت شبکه. تلاش مجدد $retryCount/5 پس از ۱۵ ثانیه...")
+                        saveHistory()
+                        delay(15000) // 15 ثانیه صبر می‌کنیم
+                    } else {
+                        success = true
+                    }
+                }
+
+                if (!success || aiResponse == null) {
+                    agentLogs.add("❌ تعداد تلاش‌ها به پایان رسید یا ارتباط قطع شد. لطفاً بعداً امتحان کنید.")
+                    saveHistory()
+                    break
+                }
                 
-                val aiResponse = aiAgent.runAgentStep(apiKey, currentModel, history, longTermMemory)
-                
-                if (aiResponse == null || aiResponse.startsWith("HTTP_ERROR") || aiResponse == "NETWORK_ERROR") {
-                    agentLogs.add("❌ خطای شبکه یا ارتباط با سرور. لطفاً اینترنت را بررسی کنید.")
+                if (aiResponse.startsWith("HTTP_ERROR")) {
+                    agentLogs.add("❌ خطای سرور: $aiResponse")
                     saveHistory()
                     break
                 }

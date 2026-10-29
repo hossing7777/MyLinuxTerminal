@@ -150,6 +150,42 @@ fun TerminalScreen() {
     val coroutineScope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+
+    // 👇 درخواست خودکار تمام دسترسی‌های سخت‌افزاری در اولین اجرا
+    val hardwarePermissions = arrayOf(
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+        Manifest.permission.RECORD_AUDIO,
+        Manifest.permission.CAMERA,
+        Manifest.permission.BLUETOOTH_SCAN,
+        Manifest.permission.BLUETOOTH_CONNECT,
+        Manifest.permission.BODY_SENSORS,
+        Manifest.permission.READ_MEDIA_IMAGES,
+        Manifest.permission.READ_MEDIA_VIDEO,
+        Manifest.permission.READ_MEDIA_AUDIO
+    )
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val granted = permissions.entries.filter { it.value }.map { it.key }
+        if (granted.isNotEmpty()) {
+            // می‌توانید در صورت نیاز لاگ بگیرید
+        }
+    }
+
+    fun requestAllHardwarePermissions() {
+        val permissionsToRequest = mutableListOf<String>()
+        for (perm in hardwarePermissions) {
+            if (ContextCompat.checkSelfPermission(context, perm) != PackageManager.PERMISSION_GRANTED) {
+                permissionsToRequest.add(perm)
+            }
+        }
+        if (permissionsToRequest.isNotEmpty()) {
+            permissionLauncher.launch(permissionsToRequest.toTypedArray())
+        }
+    }
+
     
     // 👇 درخواست دسترسی‌های سخت‌افزاری
     val hardwarePermissionLauncher = rememberLauncherForActivityResult(

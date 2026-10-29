@@ -1,9 +1,11 @@
 package com.example.mylinuxterminal
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -13,8 +15,6 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
-import android.Manifest
-import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -50,6 +50,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
@@ -133,7 +134,6 @@ fun TerminalScreen() {
     val chatList = remember { mutableStateListOf<ChatSession>() }
     val agentLogs = remember { mutableStateListOf<String>() }
     
-    // 👇 تعریف متغیرهای حافظه (این‌ها جا افتاده بودند)
     var longTermMemory by remember { mutableStateOf(prefs.getString("lt_memory", "No successful commands yet.") ?: "") }
     var globalLessons by remember { mutableStateOf("") }
     
@@ -169,43 +169,21 @@ fun TerminalScreen() {
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val granted = permissions.entries.filter { it.value }.map { it.key }
-        if (granted.isNotEmpty()) {
-            // می‌توانید در صورت نیاز لاگ بگیرید
-        }
+        // لاگ کردن تعداد دسترسی‌های داده شده
     }
 
     fun requestAllHardwarePermissions() {
-        val permissionsToRequest = mutableListOf<String>()
-        for (perm in hardwarePermissions) {
-            if (ContextCompat.checkSelfPermission(context, perm) != PackageManager.PERMISSION_GRANTED) {
-                permissionsToRequest.add(perm)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val permissionsToRequest = mutableListOf<String>()
+            for (perm in hardwarePermissions) {
+                if (ContextCompat.checkSelfPermission(context, perm) != PackageManager.PERMISSION_GRANTED) {
+                    permissionsToRequest.add(perm)
+                }
+            }
+            if (permissionsToRequest.isNotEmpty()) {
+                permissionLauncher.launch(permissionsToRequest.toTypedArray())
             }
         }
-        if (permissionsToRequest.isNotEmpty()) {
-            permissionLauncher.launch(permissionsToRequest.toTypedArray())
-        }
-    }
-
-    
-    // 👇 درخواست دسترسی‌های سخت‌افزاری
-    val hardwarePermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val granted = permissions.entries.filter { it.value }.map { it.key }
-        Toast.makeText(context, "دسترسی‌های داده شده: ${granted.size}", Toast.LENGTH_LONG).show()
-    }
-
-    fun requestHardwarePermissions() {
-        val permissions = arrayOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.CAMERA,
-            Manifest.permission.BLUETOOTH_SCAN,
-            Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.BODY_SENSORS
-        )
-        hardwarePermissionLauncher.launch(permissions)
     }
 
     val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop")
@@ -262,7 +240,6 @@ fun TerminalScreen() {
         } catch (e: Exception) {}
     }
 
-    // 👇 تعریف تابع updateMemory که جا افتاده بود
     fun updateMemory(cmd: String) {
         if (!longTermMemory.contains(cmd)) {
             longTermMemory += "\n- $cmd"
@@ -271,6 +248,9 @@ fun TerminalScreen() {
     }
 
     LaunchedEffect(Unit) {
+        // 👇 درخواست مجوز در بدو ورود
+        requestAllHardwarePermissions()
+        
         loadAllChats()
         loadGlobalMemory()
     }
@@ -727,16 +707,17 @@ fun TerminalScreen() {
                             modifier = Modifier.weight(1f)
                         ) { Text("تست") }
                     }
+                    if (isTesting) Text("در حال تست...", color = Color.Yellow, modifier = Modifier.padding(top = 4.dp))
+                    if (testResult.isNotEmpty()) Text(testResult, color = if (testResult.contains("✅")) Color.Green else Color.Red, modifier = Modifier.padding(top = 4.dp))
+
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(
-                        onClick = { requestHardwarePermissions() },
+                        onClick = { requestAllHardwarePermissions() },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF008080))
                     ) {
                         Text("Grant Hardware Permissions (دسترسی به سخت‌افزار)")
                     }
-                    if (isTesting) Text("در حال تست...", color = Color.Yellow, modifier = Modifier.padding(top = 4.dp))
-                    if (testResult.isNotEmpty()) Text(testResult, color = if (testResult.contains("✅")) Color.Green else Color.Red, modifier = Modifier.padding(top = 4.dp))
                 }
             },
             confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Close", color = Color.Cyan) } }

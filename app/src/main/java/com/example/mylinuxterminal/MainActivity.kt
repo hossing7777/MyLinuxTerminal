@@ -105,8 +105,7 @@ val fallbackModels = listOf(
     "nvidia/nemotron-3-ultra-550b-a55b:free",
     "thinkingmachines/inkling:free",
     "cohere/north-mini-code:free",
-    "nvidia/nemotron-3.5-lightning:free",
-    "dots-studio/dots-3-note-preview:free"
+    "nvidia/nemotron-3.5-lightning:free"
 )
 
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
@@ -133,11 +132,8 @@ fun MainScreen() {
         }
     ) { paddingValues ->
         Box(modifier = Modifier.padding(paddingValues)) {
-            if (selectedTab == 0) {
-                TerminalScreen()
-            } else {
-                LocalAIScreen()
-            }
+            if (selectedTab == 0) TerminalScreen()
+            if (selectedTab == 1) LocalAIScreen()
         }
     }
 }
@@ -921,7 +917,15 @@ fun LocalAIScreen() {
                 "-b", "/storage/emulated/0:/sdcard",
                 "/bin/sh", scriptFile.absolutePath
             )
-            pb.environment()["PROOT_TMP_DIR"] = tmpDir
+            pb.environment().apply {
+                put("PROOT_TMP_DIR", tmpDir)
+                put("PROOT_NO_SECCOMP", "1")
+                put("PROOT_FORCE_FOREIGN_BINARY", "1")
+                put("PROOT_LOADER", File(nativeLibDir, "libproot_loader.so").absolutePath)
+                put("LD_LIBRARY_PATH", nativeLibDir)
+                put("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+                put("HOME", "/root")
+            }
             
             try {
                 val process = pb.start()
@@ -962,10 +966,16 @@ fun LocalAIScreen() {
         
         coroutineScope.launch(Dispatchers.IO) {
             try {
+                val messagesArray = JSONArray()
+                chatHistory.forEach { (role, content) ->
+                    val apiRole = if (role == "You") "user" else "assistant"
+                    messagesArray.put(JSONObject().put("role", apiRole).put("content", content))
+                }
+                
                 val jsonBody = JSONObject().apply {
-                    put("messages", JSONArray().apply { put(JSONObject().put("role", "user").put("content", prompt)) })
+                    put("messages", messagesArray)
                     put("temperature", 0.7)
-                    put("max_tokens", 256)
+                    put("max_tokens", 512)
                 }
                 
                 val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())
@@ -1059,7 +1069,10 @@ fun LocalAIScreen() {
 
 // 👇 ================= توابع کمکی =================
 fun cleanAnsi(text: String): String {
-    var cleaned = text.replace(Regex("""\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])"""), "")
+    var cleaned = text
+    cleaned = cleaned.replace(Regex("""\u001B\[[0-9;?]*[a-zA-Z]"""), "")
+    cleaned = cleaned.replace(Regex("""\u001B\([a-zA-Z0-9]"""), "")
+    cleaned = cleaned.replace(Regex("""[\u000E\u000F]"""), "")
     cleaned = cleaned.replace(Regex("""\[\d+\s+\d+%"""), "")
     cleaned = cleaned.replace(Regex("""\[[78]"""), "")
     return cleaned

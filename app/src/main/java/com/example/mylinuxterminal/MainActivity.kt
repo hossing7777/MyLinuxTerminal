@@ -109,9 +109,22 @@ val fallbackModels = listOf(
 )
 
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
+
+class LocalAIState {
+    var isModelReady by mutableStateOf(false)
+    var isServerRunning by mutableStateOf(false)
+    var isDownloading by mutableStateOf(false)
+    var progress by mutableStateOf(0f)
+    val serverLog = mutableStateListOf<String>()
+    val chatHistory = mutableStateListOf<Pair<String, String>>()
+    var isGenerating by mutableStateOf(false)
+}
+
 @Composable
 fun MainScreen() {
     var selectedTab by remember { mutableStateOf(0) }
+    val localAiState = remember { LocalAIState() }
+    val mainScope = rememberCoroutineScope()
     
     Scaffold(
         bottomBar = {
@@ -133,7 +146,7 @@ fun MainScreen() {
     ) { paddingValues ->
         Box(modifier = Modifier.padding(paddingValues)) {
             if (selectedTab == 0) TerminalScreen()
-            if (selectedTab == 1) LocalAIScreen()
+            if (selectedTab == 1) LocalAIScreen(localAiState, mainScope)
         }
     }
 }
@@ -843,40 +856,22 @@ fun TerminalScreen() {
 // 👇 ================= تب هوش مصنوعی لوکال =================
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
-fun LocalAIScreen() {
+fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
     val context = LocalContext.current
-    val ptyProcess = remember { PtyProcess() }
-    
-    // 👇 استفاده از State به جای by برای جلوگیری از خطای delegate
-    val isModelReadyState = remember { mutableStateOf(false) }
-    val isServerRunningState = remember { mutableStateOf(false) }
-    val isDownloadingState = remember { mutableStateOf(false) }
-    val serverLog = remember { mutableStateListOf<String>() }
-    val chatHistory = remember { mutableStateListOf<Pair<String, String>>() }
-    val inputTextState = remember { mutableStateOf("") }
-    val isGeneratingState = remember { mutableStateOf(false) }
-    
-    val isModelReady = isModelReadyState.value
-    val isServerRunning = isServerRunningState.value
-    val isDownloading = isDownloadingState.value
-    val inputText = inputTextState.value
-    val isGenerating = isGeneratingState.value
-
-    val coroutineScope = rememberCoroutineScope()
-    
-    val localServerUrl = "http://127.0.0.1:8000/v1/chat/completions"
     val client = remember { OkHttpClient.Builder().connectTimeout(120, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).build() }
     val modelsDirPath = "/sdcard/Download/Local_AI_Models"
+    var inputText by remember { mutableStateOf("") }
 
     fun startLocalModelSetup() {
-        isDownloadingState.value = true
-        serverLog.clear()
-        serverLog.add("Preparing environment...")
-        serverLog.add("Looking for models in $modelsDirPath")
+        state.isDownloading = true
+        state.progress = 0f
+        state.serverLog.clear()
+        state.serverLog.add("Preparing environment...")
         
-        coroutineScope.launch(Dispatchers.IO) {
+        scope.launch(Dispatchers.IO) {
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
             val prootPath = File(nativeLibDir, "libproot.so").absolutePath
+            val loaderPath = File(nativeLibDir, "libproot_loader.so").absolutePath
             val alpinePath = File(context.filesDir, "alpine").absolutePath
             
             val scriptFile = File(context.filesDir, "local_ai_start.sh")
@@ -896,12 +891,15 @@ fun LocalAIScreen() {
                 CACHE="/sdcard/Download/Local_AI_Models/Library_Cache"
                 mkdir -p "${'$'}CACHE/apk" "${'$'}CACHE/pip"
                 
-                echo "Installing dependencies..."
+                echo "::PROGRESS:10::"
+                echo "Installing dependencies (APK)..."
                 apk add --cache-dir="${'$'}CACHE/apk" python3 py3-pip git cmake build-base libffi-dev
                 
-                echo "Installing llama-cpp-python..."
+                echo "::PROGRESS:40::"
+                echo "Installing Python packages (llama-cpp)..."
                 pip install --cache-dir="${'$'}CACHE/pip" llama-cpp-python[server] --break-system-packages --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
                 
+                echo "::PROGRESS:90::"
                 echo "Starting server..."
                 python3 -m llama_cpp.server --model "${'$'}MODEL_FILE" --host 0.0.0.0 --port 8000 &
                 echo "::SETUP_DONE::"
@@ -917,11 +915,12 @@ fun LocalAIScreen() {
                 "-b", "/storage/emulated/0:/sdcard",
                 "/bin/sh", scriptFile.absolutePath
             )
+            
             pb.environment().apply {
                 put("PROOT_TMP_DIR", tmpDir)
                 put("PROOT_NO_SECCOMP", "1")
                 put("PROOT_FORCE_FOREIGN_BINARY", "1")
-                put("PROOT_LOADER", File(nativeLibDir, "libproot_loader.so").absolutePath)
+                put("PROOT_LOADER", loaderPath)
                 put("LD_LIBRARY_PATH", nativeLibDir)
                 put("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
                 put("HOME", "/root")
@@ -934,25 +933,30 @@ fun LocalAIScreen() {
                 while (line != null) {
                     val currentLine = line
                     withContext(Dispatchers.Main) {
-                        serverLog.add(currentLine)
+                        state.serverLog.add(currentLine)
+                        if (currentLine.contains("::PROGRESS:")) {
+                            val prog = currentLine.substringAfter("::PROGRESS:").substringBefore("::").toFloatOrNull() ?: 0f
+                            state.progress = prog / 100f
+                        }
                         if (currentLine.contains("::SETUP_DONE::")) {
-                            isDownloadingState.value = false
-                            isServerRunningState.value = true
-                            isModelReadyState.value = true
-                            serverLog.add("✅ Local Model is Ready! You can chat now.")
+                            state.isDownloading = false
+                            state.isServerRunning = true
+                            state.isModelReady = true
+                            state.progress = 1f
+                            state.serverLog.add("✅ Local Model is Ready! You can chat now.")
                         }
                         if (currentLine.contains("::ERROR_NO_MODEL::")) {
-                            isDownloadingState.value = false
-                            isModelReadyState.value = false
-                            serverLog.add("❌ خطا: هیچ مدلی پیدا نشد. لطفاً یک فایل .gguf در پوشه دانلود قرار دهید.")
+                            state.isDownloading = false
+                            state.isModelReady = false
+                            state.serverLog.add("❌ خطا: هیچ مدلی پیدا نشد. لطفاً یک فایل .gguf در پوشه دانلود قرار دهید.")
                         }
                     }
                     line = reader.readLine()
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    serverLog.add("Error: ${e.message}")
-                    isDownloadingState.value = false
+                    state.serverLog.add("Error: ${e.message}")
+                    state.isDownloading = false
                 }
             }
         }
@@ -960,14 +964,13 @@ fun LocalAIScreen() {
 
     fun sendLocalChat(prompt: String) {
         if (prompt.isBlank()) return
-        chatHistory.add("You" to prompt)
-        inputTextState.value = ""
-        isGeneratingState.value = true
+        state.chatHistory.add("You" to prompt)
+        state.isGenerating = true
         
-        coroutineScope.launch(Dispatchers.IO) {
+        scope.launch(Dispatchers.IO) {
             try {
                 val messagesArray = JSONArray()
-                chatHistory.forEach { (role, content) ->
+                state.chatHistory.forEach { (role, content) ->
                     val apiRole = if (role == "You") "user" else "assistant"
                     messagesArray.put(JSONObject().put("role", apiRole).put("content", content))
                 }
@@ -979,22 +982,22 @@ fun LocalAIScreen() {
                 }
                 
                 val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())
-                val request = Request.Builder().url(localServerUrl).post(requestBody).build()
+                val request = Request.Builder().url("http://127.0.0.1:8000/v1/chat/completions").post(requestBody).build()
                 
                 client.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
                         val responseData = response.body?.string() ?: ""
                         val json = JSONObject(responseData)
                         val aiMsg = json.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content")
-                        withContext(Dispatchers.Main) { chatHistory.add("AI" to aiMsg.trim()) }
+                        withContext(Dispatchers.Main) { state.chatHistory.add("AI" to aiMsg.trim()) }
                     } else {
-                        withContext(Dispatchers.Main) { chatHistory.add("Error" to "Server error: ${response.code}") }
+                        withContext(Dispatchers.Main) { state.chatHistory.add("Error" to "Server error: ${response.code}") }
                     }
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { chatHistory.add("Error" to "Connection failed. Is the server running?") }
+                withContext(Dispatchers.Main) { state.chatHistory.add("Error" to "Connection failed. Is the server running?") }
             } finally {
-                withContext(Dispatchers.Main) { isGeneratingState.value = false }
+                withContext(Dispatchers.Main) { state.isGenerating = false }
             }
         }
     }
@@ -1003,7 +1006,7 @@ fun LocalAIScreen() {
         Text("Local AI (Offline)", color = Color.Cyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(8.dp))
         
-        if (!isModelReady && !isServerRunning) {
+        if (!state.isModelReady && !state.isServerRunning) {
             Text(
                 "لطفاً یک مدل با پسوند .gguf (مثلاً Qwen2.5-0.5B) را در پوشه زیر در حافظه گوشی کپی کنید:\n$modelsDirPath",
                 color = Color.Yellow, fontSize = 12.sp
@@ -1013,28 +1016,37 @@ fun LocalAIScreen() {
             Button(
                 onClick = { startLocalModelSetup() },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !isDownloading,
+                enabled = !state.isDownloading,
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF008080))
             ) {
-                if (isDownloading) {
+                if (state.isDownloading) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("در حال آماده‌سازی مدل...")
+                        Text("در حال آماده‌سازی...")
                     }
                 } else {
                     Text("شروع / بررسی مدل (Start Server)")
                 }
             }
             
+            if (state.isDownloading) {
+                Spacer(modifier = Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = state.progress,
+                    modifier = Modifier.fillMaxWidth().height(6.dp),
+                    color = Color.Cyan,
+                    trackColor = Color.DarkGray
+                )
+            }
+            
             Spacer(modifier = Modifier.height(16.dp))
             LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black, RoundedCornerShape(8.dp)).padding(8.dp)) {
-                items(serverLog) { log -> Text(log, color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
+                items(state.serverLog) { log -> Text(log, color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
             }
         } else {
             LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                // 👇 استفاده از Destructuring برای خواندن Pair
-                items(chatHistory) { (role, msg) ->
+                items(state.chatHistory) { (role, msg) ->
                     val isUser = role == "You"
                     Card(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -1048,18 +1060,18 @@ fun LocalAIScreen() {
             Spacer(modifier = Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
-                    value = inputText, onValueChange = { inputTextState.value = it },
+                    value = inputText, onValueChange = { inputText = it },
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("به هوش مصنوعی لوکال پیام بدهید...") },
-                    enabled = !isGenerating
+                    enabled = !state.isGenerating
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
-                    onClick = { sendLocalChat(inputText) },
-                    enabled = !isGenerating,
+                    onClick = { sendLocalChat(inputText); inputText = "" },
+                    enabled = !state.isGenerating,
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))
                 ) {
-                    if (isGenerating) CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White)
+                    if (state.isGenerating) CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White)
                     else Text("ارسال")
                 }
             }

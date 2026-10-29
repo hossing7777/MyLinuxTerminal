@@ -27,6 +27,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll // 👈 اضافه شد
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
@@ -76,7 +77,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// 👇 لیست کامل مدل‌های رایگان شما
 val availableModels = listOf(
     "auto" to "⚡ Auto (Orchestrator)",
     "parallel" to "🚀 Parallel (Race 3 Models)",
@@ -440,13 +440,15 @@ fun TerminalScreen() {
                 }
             },
             text = {
-                Column {
+                // 👇 کل محتوای پنجره چت حالا اسکرول‌شونده است
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     if (!isAiRunning) {
+                        // 👇 کادر متنی حالا حداکثر ارتفاع دارد
                         OutlinedTextField(
                             value = aiPrompt,
                             onValueChange = { aiPrompt = it },
                             placeholder = { Text("درخواست خود را بنویسید...", color = Color.Gray) },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp, max = 180.dp),
                             colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
                         )
                         Spacer(modifier = Modifier.height(16.dp))

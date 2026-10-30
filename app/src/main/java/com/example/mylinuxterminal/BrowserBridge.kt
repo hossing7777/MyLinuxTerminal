@@ -45,35 +45,35 @@ object BrowserBridge {
     )
 
     suspend fun typeText(text: String): String {
-        val safeText = text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
-        return evaluateJs("""
-            (function(){
-                let ta = document.querySelector('textarea');
-                if(!ta) return 'No textarea found';
-                ta.focus();
-                document.execCommand('insertText', false, '$safeText');
-                return 'Typed successfully';
-            })()
-        """.trimIndent())
+        val base64Text = android.util.Base64.encodeToString(text.toByteArray(), android.util.Base64.NO_WRAP)
+        val js = "(function(){" +
+                 "let ta = document.querySelector('textarea');" +
+                 "if(!ta) return 'No textarea found';" +
+                 "ta.focus();" +
+                 "let txt = atob('$base64Text');" +
+                 "document.execCommand('insertText', false, txt);" +
+                 "return 'Typed successfully';" +
+                 "})()"
+        return evaluateJs(js)
     }
 
-    suspend fun clickSend(): String = evaluateJs("""
-        (function(){
-            let btn = document.querySelector('button[type="submit"]') || document.querySelector('button[aria-label="Send"]') || document.querySelector('button[aria-label="send"]');
-            if (btn) { btn.click(); return 'Clicked Send Button'; }
-            let ta = document.querySelector('textarea');
-            if(ta) { ta.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true})); return 'Pressed Enter'; }
-            return 'Error: No send button found';
-        })()
-    """.trimIndent())
+    suspend fun clickSend(): String = evaluateJs(
+        "(function(){" +
+        "let btn = document.querySelector('button[type=\"submit\"]') || document.querySelector('button[aria-label=\"Send\"]') || document.querySelector('button[aria-label=\"send\"]');" +
+        "if (btn) { btn.click(); return 'Clicked Send Button'; }" +
+        "let ta = document.querySelector('textarea');" +
+        "if(ta) { ta.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true})); return 'Pressed Enter'; }" +
+        "return 'Error: No send button found';" +
+        "})()"
+    )
 
-    suspend fun extractCode(): String = evaluateJs("""
-        (function(){
-            let blocks = document.querySelectorAll('pre code');
-            if(blocks.length === 0) blocks = document.querySelectorAll('pre');
-            if(blocks.length === 0) return 'NO_CODE_FOUND';
-            let text = blocks[blocks.length - 1].innerText;
-            return text;
-        })()
-    """.trimIndent())
+    suspend fun extractCode(): String = evaluateJs(
+        "(function(){" +
+        "let blocks = document.querySelectorAll('pre code');" +
+        "if(blocks.length === 0) blocks = document.querySelectorAll('pre');" +
+        "if(blocks.length === 0) return 'NO_CODE_FOUND';" +
+        "let text = blocks[blocks.length - 1].innerText;" +
+        "return text;" +
+        "})()"
+    )
 }

@@ -1035,8 +1035,10 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
                 
                 val jsonBody = JSONObject().apply {
                     put("messages", messagesArray)
-                    put("temperature", 0.7)
+                    put("temperature", 0.2)       // کاهش دما برای جلوگیری از توهم
+                    put("top_p", 0.9)
                     put("max_tokens", 512)
+                    put("stop", JSONArray().put("<|im_end|>").put("<|endoftext|>"))
                 }
                 
                 val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())

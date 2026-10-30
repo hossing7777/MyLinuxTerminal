@@ -94,6 +94,7 @@ class MainActivity : ComponentActivity() {
 
 val availableModels = listOf(
     "full_auto" to "🔧 Full Auto (Recommended)",
+    "shell_agent" to "🤖 Shell Agent (No API)",
     "browser_agent" to "🌐 Browser Agent (مرورگر)",
     "duck_agent" to "🦆 Duck.ai Auto-Pilot",
     "auto" to "⚡ Auto (Orchestrator)",
@@ -604,6 +605,60 @@ fun TerminalScreen() {
     }
 
     fun runAgent(userRequest: String) {
+        if (selectedModelId == "shell_agent") {
+            isAiRunning = true
+            aiProgress = 10
+            agentLogs.add("🚀 Shell Agent started (No API required).")
+            agentLogs.add("📝 Request: $userRequest")
+            appendAgentLog("START: $userRequest")
+
+            coroutineScope.launch {
+                val scriptFile = File(context.filesDir, "free_agent.sh")
+                scriptFile.writeText("""
+                    #!/bin/sh
+                    PROMPT="${'$'}1"
+                    do_browser() { curl -m 20 -s -G "http://127.0.0.1:8081/browser" --data-urlencode "action=${'$'}1" --data-urlencode "arg=${'$'}2"; }
+                    
+                    # Ensure curl is installed
+                    if ! command -v curl >/dev/null 2>&1; then
+                        echo "Installing curl..."
+                        apk add curl >/dev/null 2>&1
+                    fi
+
+                    echo "🌐 Loading Duck.ai..."
+                    do_browser "goto" "https://duck.ai"
+                    sleep 5
+                    
+                    echo "⌨️ Typing prompt..."
+                    do_browser "type" "${'$'}PROMPT. Reply ONLY with the python code."
+                    sleep 2
+                    do_browser "send" " "
+                    
+                    echo "⏳ Waiting 15s for AI..."
+                    sleep 15
+                    
+                    echo "📖 Extracting code..."
+                    do_browser "extract_code" > /root/ai_raw_code.py
+                    sed -i '/```/d' /root/ai_raw_code.py
+                    
+                    echo "▶️ Executing code..."
+                    python3 /root/ai_raw_code.py 2>&1
+                """.trimIndent())
+                scriptFile.setExecutable(true)
+                
+                val output = executeCommandAndWait("sh /host_files/free_agent.sh \"$userRequest\"")
+                
+                withContext(Dispatchers.Main) {
+                    agentLogs.add("📄 Final Output:
+$output")
+                    appendAgentLog("DONE: $output")
+                    isAiRunning = false
+                    aiProgress = 100
+                }
+            }
+            return
+        }
+
         // 👇 اگر مدل روی Browser Agent بود و کاربر مستقیم دستور [BROWSER] داد، بدون نیاز به API کلید اجرا کن
         if (selectedModelId == "browser_agent" && userRequest.trim().startsWith("[BROWSER]")) {
             isAiRunning = true

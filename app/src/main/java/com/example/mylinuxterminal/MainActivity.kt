@@ -128,6 +128,10 @@ fun MainScreen() {
     var selectedTab by remember { mutableStateOf(0) }
     val localAiState = remember { LocalAIState() }
     val mainScope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        BrowserServer.start(mainScope)
+    }
     val context = LocalContext.current
     Scaffold(
         bottomBar = {

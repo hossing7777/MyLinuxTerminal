@@ -93,6 +93,7 @@ class MainActivity : ComponentActivity() {
 }
 
 val availableModels = listOf(
+    "full_auto" to "🔧 Full Auto (Recommended)",
     "auto" to "⚡ Auto (Orchestrator)",
     "parallel" to "🚀 Parallel (Race 3 Models)",
     "nvidia/nemotron-3-ultra-550b-a55b:free" to "Nemotron 3 Ultra (Reasoning)",
@@ -127,12 +128,6 @@ fun MainScreen() {
     val localAiState = remember { LocalAIState() }
     val mainScope = rememberCoroutineScope()
     val context = LocalContext.current
-    val dummyOutput = remember { mutableStateListOf<String>() }
-    
-    LaunchedEffect(Unit) {
-        extractLinux(context, dummyOutput)
-    }
-    
     Scaffold(
         bottomBar = {
             NavigationBar(containerColor = Color(0xFF1E1E1E)) {
@@ -211,7 +206,7 @@ fun TerminalScreen() {
     
     val aiAgent = remember { AiAgent() }
     var apiKey by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
-    var selectedModelId by remember { mutableStateOf(prefs.getString("selected_model", "auto") ?: "auto") }
+    var selectedModelId by remember { mutableStateOf(prefs.getString("selected_model", "full_auto") ?: "full_auto") }
     var showModelDropdown by remember { mutableStateOf(false) }
     var isTesting by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf("") }
@@ -492,7 +487,8 @@ fun TerminalScreen() {
         }
     }
 
-    LaunchedEffect(Unit) { 
+    LaunchedEffect(Unit) {
+        extractLinux(context, mutableListOf<String>())
         isExtracted = true
         if (setupDoneFile.exists() || prefs.getBoolean("skip_setup", false)) startTerminal(emptyList()) else showPackageDialog = true
         checkStoragePermission()
@@ -530,27 +526,71 @@ fun TerminalScreen() {
         showAiDialog = true
     }
 
+    fun getSessionDir(chatId: String): File {
+        return File(context.filesDir, "logs/$chatId").apply { mkdirs() }
+    }
+
+    fun appendAgentLog(line: String) {
+        try {
+            val ts = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+            File(getSessionDir(currentChatId), "agent.log").appendText("[$ts] $line\n")
+        } catch (_: Exception) {}
+    }
+
+    fun appendCommandLog(cmd: String, status: String) {
+        try {
+            val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+            File(getSessionDir(currentChatId), "commands.log").appendText("$ts | $status | $cmd\n")
+        } catch (_: Exception) {}
+    }
+
     fun runAgent(userRequest: String) {
         isAiRunning = true
         aiProgress = 0
+        if (apiKey.isBlank()) {
+            agentLogs.add("❌ کلید API تنظیم نشده. از ⚙️ تنظیمات لاگین کن.")
+            showSettings = true
+            return
+        }
         agentLogs.add("📝 درخواست جدید: $userRequest")
+        appendAgentLog("START: $userRequest")
         
         currentHistory.put(JSONObject().put("role", "user").put("content", userRequest))
         saveCurrentChat()
         
         agentJob = coroutineScope.launch {
+            agentLogs.add("🔐 در حال بررسی اتصال به سرور...")
+            val authTest = aiAgent.testConnection(apiKey, "nvidia/nemotron-3-ultra-550b-a55b:free")
+            if (!authTest.contains("✅")) {
+                agentLogs.add("❌ لاگین نیست: $authTest")
+                agentLogs.add("🔐 از ⚙️ تنظیمات کلید را وارد کن")
+                appendAgentLog("AUTH FAILED: $authTest")
+                isAiRunning = false
+                return@launch
+            }
+            agentLogs.add("✅ متصل شد")
+
             var step = 0
+            var totalSteps = 0
             val maxStepsPerBatch = 30
             var fallbackIndex = 0
             var consecutiveErrors = 0 
             
             while (isAiRunning) {
                 step++
+                totalSteps++
+                if (totalSteps > 200) {
+                    agentLogs.add("❌ محدودیت ۲۰۰ مرحله‌ای. متوقف شد.")
+                    break
+                }
                 var currentModel = selectedModelId
                 
-                if (selectedModelId == "auto") {
-                    if (step == 1) currentModel = "nvidia/nemotron-3-ultra-550b-a55b:free"
-                    else currentModel = "thinkingmachines/inkling:free"
+                if (selectedModelId == "full_auto" || selectedModelId == "auto") {
+                    currentModel = when {
+                        step <= 2 -> "nvidia/nemotron-3-ultra-550b-a55b:free"
+                        step <= 5 -> "thinkingmachines/inkling:free"
+                        else      -> "cohere/north-mini-code:free"
+                    }
                 } else if (selectedModelId == "parallel") {
                     currentModel = "parallel"
                 }
@@ -588,6 +628,7 @@ fun TerminalScreen() {
                 if (aiResponse.contains("TASK_COMPLETE", ignoreCase = true)) {
                     aiProgress = 100
                     agentLogs.add("✅ عملیات با موفقیت به پایان رسید!")
+                    appendAgentLog("COMPLETE")
                     currentHistory.put(JSONObject().put("role", "assistant").put("content", "TASK_COMPLETE"))
                     saveCurrentChat()
                     break
@@ -616,6 +657,7 @@ fun TerminalScreen() {
                 if (cleanCommand.isEmpty()) continue
 
                 agentLogs.add("💻 اجرای دستور: $cleanCommand")
+                appendAgentLog("CMD: $cleanCommand")
                 currentHistory.put(JSONObject().put("role", "assistant").put("content", cleanCommand))
                 
                 val output = executeWithAutoHeal(cleanCommand)
@@ -641,6 +683,13 @@ fun TerminalScreen() {
 
                 val displayOutput = if (output.isBlank()) "(بدون خروجی)" else output
                 agentLogs.add("📄 خروجی:\n$displayOutput")
+                val status = when {
+                    output.contains("Timed Out") -> "TIMEOUT"
+                    output.contains("not found", true) -> "FAIL"
+                    output.contains("error", true) -> "FAIL"
+                    else -> "OK"
+                }
+                appendCommandLog(cleanCommand, status)
                 
                 currentHistory.put(JSONObject().put("role", "user").put("content", "Output: $output\nNext command?"))
                 saveCurrentChat()
@@ -915,6 +964,14 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
     var inputText by remember { mutableStateOf("") }
 
     fun startLocalModelSetup() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            !Environment.isExternalStorageManager()) {
+            val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+            intent.data = Uri.parse("package:${context.packageName}")
+            context.startActivity(intent)
+            Toast.makeText(context, "دسترسی به پوشه Download بده", Toast.LENGTH_LONG).show()
+            return
+        }
         state.isDownloading = true
         state.progress = 0f
         state.serverLog.clear()

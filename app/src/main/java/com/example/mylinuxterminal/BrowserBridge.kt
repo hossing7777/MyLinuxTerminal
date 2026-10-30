@@ -12,7 +12,7 @@ object BrowserBridge {
     var currentUrl: String = ""
 
     suspend fun loadUrl(url: String): String = withContext(Dispatchers.Main) {
-        val wv = webView ?: return@withContext "Error: Browser not ready (open the Browser tab first)"
+        val wv = webView ?: return@withContext "Error: Browser not ready"
         wv.loadUrl(url)
         delay(1500)
         currentUrl = url
@@ -45,7 +45,7 @@ object BrowserBridge {
     )
 
     suspend fun typeText(text: String): String {
-        val safeText = text.replace("\", "\\").replace("'", "\\'").replace("\n", "\\n")
+        val safeText = text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
         return evaluateJs("""
             (function(){
                 let ta = document.querySelector('textarea');

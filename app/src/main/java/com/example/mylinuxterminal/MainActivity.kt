@@ -1040,17 +1040,23 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
         scope.launch(Dispatchers.IO) {
             try {
                 val messagesArray = JSONArray()
-                state.chatHistory.forEach { (role, content) ->
-                    val apiRole = if (role == "You") "user" else "assistant"
+                messagesArray.put(JSONObject().put("role", "system").put("content", "You are an expert Python and Linux coding assistant. Answer ONLY in English or provide raw code."))
+                
+                // فقط ۴ پیام آخر برای جلوگیری از توهم مدل کوچک
+                val recentHistory = state.chatHistory.takeLast(4)
+                recentHistory.forEach { (role, content) ->
+                    val apiRole = if (role.startsWith("You")) "user" else "assistant"
                     messagesArray.put(JSONObject().put("role", apiRole).put("content", content))
                 }
                 
                 val jsonBody = JSONObject().apply {
                     put("messages", messagesArray)
-                    put("temperature", 0.1)       // دمای بسیار پایین برای کد
-                    put("top_p", 0.9)
-                    put("repeat_penalty", 1.15)   // جلوگیری از تکرار کلمات
-                    put("max_tokens", 256)        // کاهش حجم پاسخ برای جلوگیری از تایم‌اوت
+                    put("temperature", 0.1)
+                    put("top_p", 0.95)
+                    put("top_k", 40)
+                    put("min_p", 0.05)
+                    put("repeat_penalty", 1.1)
+                    put("max_tokens", 256)
                     put("stop", JSONArray().put("<|im_end|>").put("<|endoftext|>"))
                 }
                 
@@ -1261,3 +1267,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
     }
 }
 // Build Triggered: Fri Oct 30 01:25:27 +0330 2026
+
+// Trigger build: Anti-hallucination applied

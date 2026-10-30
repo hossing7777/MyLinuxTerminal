@@ -41,6 +41,24 @@ class AiAgent {
                - For Python packages use: `pip install --cache-dir=/sdcard/Download/Local_AI_Models/Library_Cache/pip --break-system-packages <package>`
                This way, the system checks the cache first and only downloads if missing.
             7. COMPLETION: When done, reply ONLY with: TASK_COMPLETE
+
+            BROWSER CONTROL (VERY IMPORTANT):
+            You can control the Android WebView browser by outputting these exact commands (they are intercepted before reaching bash):
+            - [BROWSER] goto <url>           → load a URL (e.g. [BROWSER] goto https://example.com)
+            - [BROWSER] text                 → get visible text of current page (returns plain text)
+            - [BROWSER] source               → get full HTML source (truncated to 2000 chars)
+            - [BROWSER] click <css_selector> → click an element (e.g. [BROWSER] click #submit)
+            - [BROWSER] eval <javascript>    → run arbitrary JS and get return value
+            - [BROWSER] url                  → get the current page URL
+
+            EXAMPLE WORKFLOW for web scraping:
+            1. [BROWSER] goto https://example.com
+            2. [BROWSER] text
+            → read the returned text, then decide next step.
+            
+            NOTE: Browser commands DO NOT go through bash. They are intercepted by the Android app.
+            Only use them when the user asks for web browsing / scraping / checking a website.
+            For simple HTTP requests you can also just use curl in bash.
         """.trimIndent()
     }
 

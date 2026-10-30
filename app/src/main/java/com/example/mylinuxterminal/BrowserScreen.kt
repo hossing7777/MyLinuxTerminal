@@ -124,7 +124,7 @@ fun BrowserScreen(initialUrl: String = "https://www.google.com") {
                             v: WebView?, url: String?, favicon: android.graphics.Bitmap?
                         ) {
                             super.onPageStarted(v, url, favicon)
-                            url?.let { address = it; currentUrl = it }
+                            url?.let { address = it; currentUrl = it; BrowserBridge.currentUrl = it }
                         }
                         override fun onPageFinished(v: WebView?, url: String?) {
                             super.onPageFinished(v, url)
@@ -143,6 +143,8 @@ fun BrowserScreen(initialUrl: String = "https://www.google.com") {
 
                     loadUrl(currentUrl)
                     webView = this
+                    BrowserBridge.webView = this
+                    BrowserBridge.currentUrl = currentUrl
                 }
             }
         )
@@ -151,6 +153,7 @@ fun BrowserScreen(initialUrl: String = "https://www.google.com") {
     DisposableEffect(Unit) {
         onDispose {
             CookieManager.getInstance().flush()
+            BrowserBridge.webView = null
             webView?.destroy()
         }
     }

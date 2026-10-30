@@ -94,6 +94,7 @@ class MainActivity : ComponentActivity() {
 
 val availableModels = listOf(
     "full_auto" to "🔧 Full Auto (Recommended)",
+    "browser_agent" to "🌐 Browser Agent (مرورگر)",
     "auto" to "⚡ Auto (Orchestrator)",
     "parallel" to "🚀 Parallel (Race 3 Models)",
     "nvidia/nemotron-3-ultra-550b-a55b:free" to "Nemotron 3 Ultra (Reasoning)",
@@ -329,6 +330,26 @@ fun TerminalScreen() {
     }
 
     suspend fun executeCommandAndWait(command: String): String {
+        // 👇 اینترسپت دستورات مرورگر
+        if (command.startsWith("[BROWSER]")) {
+            val rest = command.substringAfter("[BROWSER]").trim()
+            val action = rest.substringBefore(" ")
+            val arg = rest.substringAfter(" ", "").trim()
+            agentLogs.add("🌐 مرورگر: $action ${arg.take(40)}")
+            val result = when (action) {
+                "goto", "open" -> BrowserBridge.loadUrl(arg)
+                "source", "html" -> BrowserBridge.getPageSource()
+                "text" -> BrowserBridge.getPageText()
+                "click" -> BrowserBridge.clickElement(arg)
+                "eval" -> BrowserBridge.evaluateJs(arg)
+                "url" -> "Current URL: ${'$'}{BrowserBridge.currentUrl}"
+                else -> "Error: Unknown browser action '$action'. Use: goto|source|text|click|eval|url"
+            }
+            val display = if (result.length > 2000) result.take(2000) + "\n...[truncated ${'$'}{result.length} chars]" else result
+            agentLogs.add("🌐 نتیجه: ${'$'}{display.take(200)}...")
+            return display
+        }
+
         return withContext(Dispatchers.IO) {
             val deferred = CompletableDeferred<String>()
             terminalState.commandDeferred = deferred
@@ -605,6 +626,8 @@ fun TerminalScreen() {
                         step <= 5 -> "thinkingmachines/inkling:free"
                         else      -> "cohere/north-mini-code:free"
                     }
+                } else if (selectedModelId == "browser_agent") {
+                    currentModel = "nvidia/nemotron-3-ultra-550b-a55b:free"
                 } else if (selectedModelId == "parallel") {
                     currentModel = "parallel"
                 }

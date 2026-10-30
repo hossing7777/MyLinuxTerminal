@@ -939,7 +939,19 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
                 
                 echo "::PROGRESS:40::"
                 echo "Installing Python packages (llama-cpp)..."
-                pip install llama-cpp-python[server] --break-system-packages --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+                # استفاده از میرور علی‌بابا و افزایش تایم‌اوت/تعداد تلاش
+                pip install llama-cpp-python[server] --break-system-packages \
+                    -i https://mirrors.aliyun.com/pypi/simple/ \
+                    --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu \
+                    --timeout 120 \
+                    --retries 10
+                
+                # بررسی موفقیت‌آمیز بودن نصب
+                if [ $? -ne 0 ]; then
+                    echo "❌ ERROR: Failed to install Python packages after several retries."
+                    echo "::ERROR_NO_MODEL::"
+                    exit 1
+                fi
                 
                 echo "::PROGRESS:90::"
                 echo "Loading model into RAM... Please wait (1-2 minutes)"

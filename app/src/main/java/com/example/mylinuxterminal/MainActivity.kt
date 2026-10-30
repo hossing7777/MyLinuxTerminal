@@ -580,10 +580,30 @@ fun TerminalScreen() {
     }
 
     fun runAgent(userRequest: String) {
+        // 👇 اگر مدل روی Browser Agent بود و کاربر مستقیم دستور [BROWSER] داد، بدون نیاز به API کلید اجرا کن
+        if (selectedModelId == "browser_agent" && userRequest.trim().startsWith("[BROWSER]")) {
+            isAiRunning = true
+            agentLogs.add("🌐 اجرای دستور مستقیم مرورگر...")
+            coroutineScope.launch {
+                val output = executeCommandAndWait(userRequest.trim())
+                agentLogs.add("📄 خروجی:\n$output")
+                isAiRunning = false
+            }
+            return
+        }
+
         isAiRunning = true
         aiProgress = 0
         if (apiKey.isBlank()) {
-            agentLogs.add("❌ کلید API تنظیم نشده. از ⚙️ تنظیمات لاگین کن.")
+            if (selectedModelId == "browser_agent") {
+                agentLogs.add("❌ کلید API وارد نشده است!")
+                agentLogs.add("💡 برای کنترل مرورگر بدون کلید، دستور خود را دقیقاً با [BROWSER] شروع کنید. مثال:")
+                agentLogs.add("[BROWSER] goto https://google.com")
+                agentLogs.add("یا [BROWSER] text")
+                agentLogs.add("برای استفاده از هوش مصنوعی (تا خودش دستورات مرورگر را بزند)، از ⚙️ تنظیمات کلید API را وارد کنید.")
+            } else {
+                agentLogs.add("❌ کلید API تنظیم نشده. برای استفاده از هوش مصنوعی از ⚙️ تنظیمات لاگین کن.")
+            }
             showSettings = true
             return
         }

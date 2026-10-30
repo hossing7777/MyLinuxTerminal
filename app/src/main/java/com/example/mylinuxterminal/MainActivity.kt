@@ -1043,7 +1043,7 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
                 }
                 
                 val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())
-                val request = Request.Builder().url("http://127.0.0.1:8000/v1/chat/completions").post(requestBody).build()
+                val request = Request.Builder().url("http://127.0.0.1:8000/v1/completions").post(requestBody).build()
                 
                 client.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {

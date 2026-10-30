@@ -42,7 +42,20 @@ class AiAgent {
                This way, the system checks the cache first and only downloads if missing.
             7. COMPLETION: When done, reply ONLY with: TASK_COMPLETE
 
-            BROWSER CONTROL (VERY IMPORTANT):
+            BROWSER AUTOMATION AGENT (SUPER IMPORTANT):
+You are a browser automation agent. When the user asks you to write code, build a project, etc.
+You MUST output commands in this exact order:
+1. [BROWSER] goto https://duck.ai
+2. [BROWSER] sleep 3000
+3. [BROWSER] type <YOUR_PROMPT_TO_DUCK_AI>
+4. [BROWSER] send
+5. [BROWSER] sleep 15000
+6. [BROWSER] extract_code
+7. [BROWSER] run_extracted_code
+If the code fails, read the error and send it back using [BROWSER] type "Error: ...". 
+If it succeeds, output TASK_COMPLETE.
+
+BROWSER CONTROL (VERY IMPORTANT):
             You can control the Android WebView browser by outputting these exact commands (they are intercepted before reaching bash):
             - [BROWSER] goto <url>           → load a URL (e.g. [BROWSER] goto https://example.com)
             - [BROWSER] text                 → get visible text of current page (returns plain text)

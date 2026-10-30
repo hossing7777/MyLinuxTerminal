@@ -43,4 +43,34 @@ object BrowserBridge {
     suspend fun clickElement(selector: String): String = evaluateJs(
         "var el=document.querySelector('$selector'); if(el){el.click();'Clicked: $selector'}else{'Error: Element not found: $selector'}"
     )
+
+    suspend fun typeText(text: String): String = evaluateJs("""
+        (function(){
+            let ta = document.querySelector('textarea');
+            if(!ta) return 'No textarea';
+            ta.focus();
+            document.execCommand('insertText', false, `$text`);
+            return 'Typed';
+        })()
+    """.trimIndent())
+
+    suspend fun clickSend(): String = evaluateJs("""
+        (function(){
+            let btn = document.querySelector('button[type="submit"]') || document.querySelector('button[aria-label="Send"]') || document.querySelector('button[aria-label="send"]');
+            if (btn) { btn.click(); return 'Clicked'; }
+            let ta = document.querySelector('textarea');
+            if(ta) { ta.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true})); return 'Pressed Enter'; }
+            return 'Error';
+        })()
+    """.trimIndent())
+
+    suspend fun extractCode(): String = evaluateJs("""
+        (function(){
+            let blocks = document.querySelectorAll('pre code');
+            if(blocks.length === 0) blocks = document.querySelectorAll('pre');
+            if(blocks.length === 0) return 'NO_CODE_FOUND';
+            let text = blocks[blocks.length - 1].innerText;
+            return text;
+        })()
+    """.trimIndent())
 }

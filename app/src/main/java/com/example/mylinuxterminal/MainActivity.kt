@@ -148,6 +148,13 @@ fun MainScreen() {
                     icon = { Icon(Icons.Default.Settings, contentDescription = "Local AI", tint = Color.Cyan) },
                     label = { Text("Local AI", color = Color.Cyan) }
                 )
+
+                NavigationBarItem(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
+                    icon = { Icon(Icons.Default.Search, contentDescription = "Browser", tint = Color.Cyan) },
+                    label = { Text("Browser", color = Color.Cyan) }
+                )
             }
         }
     ) { paddingValues ->
@@ -158,6 +165,10 @@ fun MainScreen() {
                 }
                 Box(modifier = Modifier.fillMaxSize().zIndex(if (selectedTab == 1) 1f else 0f)) {
                     LocalAIScreen(localAiState, mainScope)
+                }
+
+                Box(modifier = Modifier.fillMaxSize().zIndex(if (selectedTab == 2) 1f else 0f)) {
+                    BrowserScreen()
                 }
             }
         }

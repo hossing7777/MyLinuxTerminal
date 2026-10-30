@@ -38,8 +38,7 @@ Java_com_example_mylinuxterminal_PtyProcess_createPty(
         close(fd); fd = -1; goto cleanup;
     }
 
-    int flags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    /* NO O_NONBLOCK - blocking read is required by the Kotlin reader loop */
 
     pid_t pid = fork();
     if (pid < 0) {
@@ -96,16 +95,19 @@ Java_com_example_mylinuxterminal_PtyProcess_readData(
     jsize len = (*env)->GetArrayLength(env, buffer);
     jbyte *bytes = (*env)->GetByteArrayElements(env, buffer, NULL);
 
-    ssize_t n = read(g_master_fd, bytes, (size_t)len);
+    /* BLOCKING read, retry on EINTR */
+    ssize_t n;
+    do {
+        n = read(g_master_fd, bytes, (size_t)len);
+    } while (n < 0 && errno == EINTR);
+
     (*env)->ReleaseByteArrayElements(env, buffer, bytes, 0);
 
     if (n < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
-        if (errno == EINTR) return 0;
         LOGE("read: %s", strerror(errno));
         return -1;
     }
-    if (n == 0) return -1;
+    if (n == 0) return -1;   /* EOF: child died */
     return (jint)n;
 }
 
@@ -118,9 +120,11 @@ Java_com_example_mylinuxterminal_PtyProcess_writeData(
     size_t len = strlen(c), off = 0;
 
     while (off < len) {
-        ssize_t n = write(g_master_fd, c + off, len - off);
+        ssize_t n;
+        do {
+            n = write(g_master_fd, c + off, len - off);
+        } while (n < 0 && errno == EINTR);
         if (n < 0) {
-            if (errno == EINTR || errno == EAGAIN) { usleep(2000); continue; }
             LOGE("write: %s", strerror(errno));
             break;
         }

@@ -450,10 +450,24 @@ fun TerminalScreen() {
 
             withContext(Dispatchers.Main) { outputLines.clear() }
 
+            withContext(Dispatchers.Main) { outputLines.add("🔧 Starting PTY...") }
+
             terminalState.ptyFd = ptyProcess.createPty(
                 scriptFile.absolutePath, prootPath, alpinePath, tmpDir, loaderPath, nativeLibDir, context.filesDir.absolutePath
             )
-            
+
+            withContext(Dispatchers.Main) {
+                outputLines.add("PTY fd = ${terminalState.ptyFd}")
+                if (terminalState.ptyFd <= 0) {
+                    outputLines.add("❌ PTY failed. Check:")
+                    outputLines.add("  • proot binary: $prootPath")
+                    outputLines.add("  • loader: $loaderPath")
+                    outputLines.add("  • alpine dir: $alpinePath")
+                    outputLines.add("  • start.sh: ${scriptFile.absolutePath}")
+                    return@withContext
+                }
+            }
+
             if (terminalState.ptyFd > 0) {
                 val buf = ByteArray(4096)
                 while (true) {

@@ -341,34 +341,39 @@ fun TerminalScreen() {
             val action = rest.substringBefore(" ")
             val arg = rest.substringAfter(" ", "").trim()
             agentLogs.add("🌐 مرورگر: $action ${arg.take(40)}")
-                        val result = when (action) {
+            
+            val result = when (action) {
                 "goto", "open" -> BrowserBridge.loadUrl(arg)
                 "source", "html" -> BrowserBridge.getPageSource()
                 "text" -> BrowserBridge.getPageText()
                 "click" -> BrowserBridge.clickElement(arg)
                 "eval" -> BrowserBridge.evaluateJs(arg)
-                "url" -> "Current URL: ${'$'}{BrowserBridge.currentUrl}"
+                "url" -> "Current URL: ${BrowserBridge.currentUrl}"
                 "type" -> BrowserBridge.typeText(arg)
                 "send" -> BrowserBridge.clickSend()
                 "extract_code" -> BrowserBridge.extractCode()
                 "run_extracted_code" -> {
                     val code = BrowserBridge.extractCode()
-                    if (code.startsWith("NO_CODE")) return "Error: No code found to run"
-                    val safeCode = code.replace("'", "'\''")
-                    // ارسال به ترمینال برای اجرا
-                    val output = executeCommandAndWait("echo '$safeCode' > /tmp/ai_script.py && python3 /tmp/ai_script.py 2>&1")
-                    "Code Execution Output:
-${'$'}output"
+                    if (code.startsWith("NO_CODE")) {
+                        "Error: No code found to run"
+                    } else {
+                        val safeCode = code.replace("'", "'\''")
+                        val output = executeCommandAndWait("echo '$safeCode' > /tmp/ai_script.py && python3 /tmp/ai_script.py 2>&1")
+                        "Code Execution Output:
+$output"
+                    }
                 }
                 "sleep" -> {
                     val ms = arg.toLongOrNull() ?: 3000L
                     kotlinx.coroutines.delay(ms)
-                    "Waited ${'$'}ms milliseconds."
+                    "Waited ${ms} milliseconds."
                 }
                 else -> "Error: Unknown browser action '$action'. Use: goto|type|send|extract_code|run_extracted_code"
             }
-            val display = if (result.length > 2000) result.take(2000) + "\n...[truncated ${'$'}{result.length} chars]" else result
-            agentLogs.add("🌐 نتیجه: ${'$'}{display.take(200)}...")
+            
+            val display = if (result.length > 2000) result.take(2000) + "
+...[truncated ${result.length} chars]" else result
+            agentLogs.add("🌐 نتیجه: ${display.take(200)}...")
             return display
         }
 

@@ -44,23 +44,26 @@ object BrowserBridge {
         "var el=document.querySelector('$selector'); if(el){el.click();'Clicked: $selector'}else{'Error: Element not found: $selector'}"
     )
 
-    suspend fun typeText(text: String): String = evaluateJs("""
-        (function(){
-            let ta = document.querySelector('textarea');
-            if(!ta) return 'No textarea';
-            ta.focus();
-            document.execCommand('insertText', false, `$text`);
-            return 'Typed';
-        })()
-    """.trimIndent())
+    suspend fun typeText(text: String): String {
+        val safeText = text.replace("\", "\\").replace("'", "\\'").replace("\n", "\\n")
+        return evaluateJs("""
+            (function(){
+                let ta = document.querySelector('textarea');
+                if(!ta) return 'No textarea found';
+                ta.focus();
+                document.execCommand('insertText', false, '$safeText');
+                return 'Typed successfully';
+            })()
+        """.trimIndent())
+    }
 
     suspend fun clickSend(): String = evaluateJs("""
         (function(){
             let btn = document.querySelector('button[type="submit"]') || document.querySelector('button[aria-label="Send"]') || document.querySelector('button[aria-label="send"]');
-            if (btn) { btn.click(); return 'Clicked'; }
+            if (btn) { btn.click(); return 'Clicked Send Button'; }
             let ta = document.querySelector('textarea');
             if(ta) { ta.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true})); return 'Pressed Enter'; }
-            return 'Error';
+            return 'Error: No send button found';
         })()
     """.trimIndent())
 

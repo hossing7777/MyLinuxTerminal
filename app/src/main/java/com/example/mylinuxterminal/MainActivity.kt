@@ -335,7 +335,6 @@ fun TerminalScreen() {
     }
 
     suspend fun executeCommandAndWait(command: String): String {
-        // 👇 اینترسپت دستورات مرورگر
         if (command.startsWith("[BROWSER]")) {
             val rest = command.substringAfter("[BROWSER]").trim()
             val action = rest.substringBefore(" ")
@@ -359,8 +358,7 @@ fun TerminalScreen() {
                     } else {
                         val safeCode = android.util.Base64.encodeToString(code.toByteArray(), android.util.Base64.NO_WRAP)
                         val output = executeCommandAndWait("echo '" + safeCode + "' | base64 -d > /tmp/ai_script.py && python3 /tmp/ai_script.py 2>&1")
-                        "Code Execution Output:
-" + output
+                        "Code Execution Output:\n" + output
                     }
                 }
                 "sleep" -> {
@@ -379,11 +377,11 @@ fun TerminalScreen() {
         return withContext(Dispatchers.IO) {
             val deferred = CompletableDeferred<String>()
             terminalState.commandDeferred = deferred
-            terminalState.currentMarker = "::CMD_DONE_${System.currentTimeMillis()}::"
+            terminalState.currentMarker = "::CMD_DONE_" + System.currentTimeMillis() + "::"
             terminalState.commandOutputBuffer.clear()
             terminalState.isWaitingForCommand = true
             
-            ptyProcess.writeData("stty -echo; $command 2>&1; echo \"${terminalState.currentMarker}\"; stty echo\n")
+            ptyProcess.writeData("stty -echo; " + command + " 2>&1; echo \"" + terminalState.currentMarker + "\"; stty echo\n")
             
             try {
                 withTimeout(120000) { deferred.await() }

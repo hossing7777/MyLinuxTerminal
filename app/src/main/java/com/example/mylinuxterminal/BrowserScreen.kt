@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -49,7 +50,7 @@ fun BrowserScreen(initialUrl: String = "https://www.google.com") {
     var webView by remember { mutableStateOf<WebView?>(null) }
     var progress by remember { mutableStateOf(0) }
 
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().background(Color(0xFF121212))) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,

@@ -1035,9 +1035,10 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
                 
                 val jsonBody = JSONObject().apply {
                     put("messages", messagesArray)
-                    put("temperature", 0.2)       // کاهش دما برای جلوگیری از توهم
+                    put("temperature", 0.1)       // دمای بسیار پایین برای کد
                     put("top_p", 0.9)
-                    put("max_tokens", 512)
+                    put("repeat_penalty", 1.15)   // جلوگیری از تکرار کلمات
+                    put("max_tokens", 256)        // کاهش حجم پاسخ برای جلوگیری از تایم‌اوت
                     put("stop", JSONArray().put("<|im_end|>").put("<|endoftext|>"))
                 }
                 

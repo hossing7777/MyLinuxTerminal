@@ -97,6 +97,7 @@ fun BrowserScreen(initialUrl: String = "https://www.google.com") {
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 WebView(ctx).apply {
+                    setBackgroundColor(android.graphics.Color.WHITE)
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.databaseEnabled = true
@@ -107,8 +108,13 @@ fun BrowserScreen(initialUrl: String = "https://www.google.com") {
                     settings.displayZoomControls = false
                     settings.mediaPlaybackRequiresUserGesture = false
                     settings.userAgentString =
-                        "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
-                        "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+                        "Mozilla/5.0 (Linux; Android 13; SM-G998B) AppleWebKit/537.36 " +
+                        "(KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    settings.allowFileAccess = true
+                    settings.allowContentAccess = true
+                    settings.setGeolocationEnabled(true)
+                    settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
 
                     CookieManager.getInstance().setAcceptCookie(true)
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
@@ -138,6 +144,10 @@ fun BrowserScreen(initialUrl: String = "https://www.google.com") {
                     webChromeClient = object : android.webkit.WebChromeClient() {
                         override fun onProgressChanged(v: WebView?, newProgress: Int) {
                             progress = newProgress
+                        }
+                        override fun onConsoleMessage(consoleMessage: android.webkit.ConsoleMessage?): Boolean {
+                            android.util.Log.d("WebViewConsole", "${consoleMessage?.message()} -- From line ${consoleMessage?.lineNumber()} of ${consoleMessage?.sourceId()}")
+                            return true
                         }
                     }
 

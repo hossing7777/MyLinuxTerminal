@@ -26,7 +26,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -48,7 +47,7 @@ fun BrowserScreen(initialUrl: String = "https://www.google.com") {
     var canBack by remember { mutableStateOf(false) }
     var canForward by remember { mutableStateOf(false) }
     var webView by remember { mutableStateOf<WebView?>(null) }
-    var progress by remember { mutableIntStateOf(0) }
+    var progress by remember { mutableStateOf(0) }
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -87,7 +86,7 @@ fun BrowserScreen(initialUrl: String = "https://www.google.com") {
 
         if (progress in 1..99) {
             LinearProgressIndicator(
-                progress = { progress / 100f },
+                progress = progress / 100f,
                 modifier = Modifier.fillMaxWidth()
             )
         }

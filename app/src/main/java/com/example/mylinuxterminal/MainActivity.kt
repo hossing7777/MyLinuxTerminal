@@ -403,19 +403,42 @@ fun TerminalScreen() {
             val tmpDir = File(context.cacheDir, "proot_tmp").absolutePath
             File(tmpDir).mkdirs()
             
-            val installFunc = "install_pkg() { PKG=\$1 ; if apk info -e \$PKG >/dev/null 2>&1; then return; fi ; if ls \$CACHE/\$PKG-*.apk >/dev/null 2>&1; then echo '📦 [Local Cache] Installing \$PKG from local storage...' ; apk add --cache-dir=\$CACHE --allow-untrusted \$PKG ; else echo '🌐 [Internet] Downloading and installing \$PKG...' ; apk add --cache-dir=\$CACHE \$PKG ; fi ; }"
-            
-            val setupPart = if (!setupDoneFile.exists() && packagesToInstall.isNotEmpty()) {
-                packagesToInstall.joinToString(" ; ") { "install_pkg $it" } + " ; touch /.setup_done"
+            // ساخت یک فایل اسکریپت مجزا برای نصب پیش‌نیازها (بدون خطای سینتکس)
+            val setupScriptFile = File(context.filesDir, "terminal_setup.sh")
+            val setupPackages = if (!setupDoneFile.exists() && packagesToInstall.isNotEmpty()) {
+                packagesToInstall.joinToString("\n") { "install_pkg $it" } + "\ntouch /.setup_done"
             } else {
                 ""
             }
+            
+            val setupContent = """
+                #!/bin/sh
+                CACHE=/sdcard/Download/Local_AI_Models/Library_Cache/apk
+                mkdir -p ${'$'}CACHE
+                install_pkg() {
+                    PKG=${'$'}1
+                    if apk info -e ${'$'}PKG >/dev/null 2>&1; then return; fi
+                    if ls ${'$'}CACHE/${'$'}PKG-*.apk >/dev/null 2>&1; then
+                        echo "📦 [Local Cache] Installing ${'$'}PKG from local storage..."
+                        apk add --cache-dir=${'$'}CACHE --allow-untrusted ${'$'}PKG
+                    else
+                        echo "🌐 [Internet] Downloading and installing ${'$'}PKG..."
+                        apk add --cache-dir=${'$'}CACHE ${'$'}PKG
+                    fi
+                }
+                install_pkg bash
+                install_pkg net-tools
+                install_pkg procps
+                $setupPackages
+                echo '::SETUP_DONE::'
+            """.trimIndent()
+            setupScriptFile.writeText(setupContent)
+            setupScriptFile.setExecutable(true)
 
-            val initialCmd = "mkdir -p /sdcard/Download/Local_AI_Models/Library_Cache/apk ; CACHE=/sdcard/Download/Local_AI_Models/Library_Cache/apk ; $installFunc ; install_pkg bash ; install_pkg net-tools ; install_pkg procps ; $setupPart ; echo '::SETUP_DONE::'"
-
+            // اجرای اسکریپت از طریق پوشه share شده در PRoot
             val scriptFile = File(context.filesDir, "start.sh")
             scriptFile.writeText("""
-                $prootPath --kill-on-exit --link2symlink --sysvipc -0 -r $alpinePath -w / -b /dev -b /proc -b /sys -b /storage/emulated/0:/sdcard /bin/sh -c "$initialCmd; exec /bin/sh"
+                $prootPath --kill-on-exit --link2symlink --sysvipc -0 -r $alpinePath -w / -b /dev -b /proc -b /sys -b /storage/emulated/0:/sdcard -b ${context.filesDir.absolutePath}:/host_files /bin/sh -c "sh /host_files/terminal_setup.sh; exec /bin/sh"
             """.trimIndent())
             scriptFile.setExecutable(true)
 

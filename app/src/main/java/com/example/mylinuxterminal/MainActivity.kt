@@ -893,7 +893,7 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
             val alpinePath = File(context.filesDir, "alpine").absolutePath
             
             val scriptFile = File(context.filesDir, "local_ai_start.sh")
-            scriptFile.writeText("""
+                        scriptFile.writeText("""
                 #!/bin/sh
                 export PYTHONUNBUFFERED=1
                 MODEL_DIR="$modelsDirPath"
@@ -908,21 +908,19 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
                 
                 echo "Found model: ${'$'}MODEL_FILE"
                 CACHE="/sdcard/Download/Local_AI_Models/Library_Cache"
-                mkdir -p "${'$'}CACHE/apk" "${'$'}CACHE/pip"
+                mkdir -p "${'$'}CACHE/apk"
                 
                 echo "::PROGRESS:10::"
                 echo "Installing dependencies (APK)... This takes a few minutes."
                 apk add --cache-dir="${'$'}CACHE/apk" python3 py3-pip python3-dev git cmake build-base libffi-dev linux-headers
-                cp -rn /var/cache/apk/* "${'$'}CACHE/apk/" 2>/dev/null || true
                 
                 echo "::PROGRESS:40::"
-                echo "Installing Python packages (llama-cpp)... Compiling from source takes 10-20 mins."
-                pip install --cache-dir="${'$'}CACHE/pip" llama-cpp-python[server] --break-system-packages --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+                echo "Installing Python packages (llama-cpp)..."
+                pip install llama-cpp-python[server] --break-system-packages --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
                 
                 echo "::PROGRESS:90::"
-                echo "Starting server..."
-                echo "::SETUP_DONE::"
-                python3 -u -m llama_cpp.server --model "${'$'}MODEL_FILE" --host 0.0.0.0 --port 8000
+                echo "Loading model into RAM... Please wait (1-2 minutes)"
+                python3 -u -m llama_cpp.server --model "${'$'}MODEL_FILE" --host 0.0.0.0 --port 8000 --n_ctx 2048
             """.trimIndent())
             scriptFile.setExecutable(true)
             
@@ -975,7 +973,7 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
                             state.progress = prog / 100f
                             state.serverLog.add("📊 Progress: ${prog.toInt()}%")
                         }
-                        if (currentLine.contains("::SETUP_DONE::")) {
+                        if (currentLine.contains("Uvicorn running on http://0.0.0.0:8000")) {
                             state.isDownloading = false
                             state.isServerRunning = true
                             state.isModelReady = true

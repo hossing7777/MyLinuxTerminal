@@ -108,8 +108,8 @@ fun BrowserScreen(initialUrl: String = "https://www.google.com") {
                     settings.displayZoomControls = false
                     settings.mediaPlaybackRequiresUserGesture = false
                     settings.userAgentString =
-                        "Mozilla/5.0 (Linux; Android 13; SM-G998B) AppleWebKit/537.36 " +
-                        "(KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                     settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     settings.allowFileAccess = true
                     settings.allowContentAccess = true

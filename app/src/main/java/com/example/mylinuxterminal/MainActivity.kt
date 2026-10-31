@@ -451,6 +451,19 @@ fun TerminalScreen() {
                     
                     agentLogs.add("📖 Extracting code...")
                     var rawCode = BrowserBridge.extractCode()
+                    
+                    // استخراج پلن (To-Do List) از پاسخ هوش مصنوعی
+                    val planRegex = Regex("\\[PLAN\\]([\\s\\S]*?)\\[/PLAN\\]")
+                    val planMatch = planRegex.find(rawCode)
+                    if (planMatch != null) {
+                        currentPlan = planMatch.groupValues[1].trim()
+                        agentLogs.add("📋 Plan Extracted!")
+                    } else {
+                        // اگر هوش مصنوعی پلن نداد، یک پلن پیش‌فرض بساز
+                        currentPlan = "1. Analyze request\n2. Write Python code\n3. Execute and verify\n4. Fix errors if any"
+                    }
+                    // حذف بلاک پلن از کد تا فقط کد خالص برای اجرا بماند
+                    rawCode = rawCode.replace(planMatch?.value ?: "", "")
                     rawCode = rawCode.replace("\\u003C", "<").replace("\\u003E", ">").replace("&lt;", "<").replace("&gt;", ">").replace("\\u0026", "&")
                     
                     if (rawCode == "NO_CODE_FOUND" || rawCode.isBlank() || rawCode.contains("Error: Browser not ready")) {
@@ -679,9 +692,20 @@ fun TerminalScreen() {
                             }
                         }
                     } else if (agentViewMode == 2) {
-                        Text("Current Plan:", color = Color.Yellow, fontSize = 12.sp)
-                        Box(modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black).padding(8.dp).verticalScroll(rememberScrollState())) {
-                            Text(if (currentPlan.isBlank()) "No active plan." else currentPlan, color = Color.Green, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                        Text("Current Plan (To-Do):", color = Color.Yellow, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Box(modifier = Modifier.fillMaxWidth().height(250.dp).background(Color(0xFF1E1E1E), RoundedCornerShape(8.dp)).padding(12.dp).verticalScroll(rememberScrollState())) {
+                            if (currentPlan.isBlank()) {
+                                Text("No active plan. Start a task to see the AI's roadmap here.", color = Color.Gray, fontSize = 12.sp)
+                            } else {
+                                Text(
+                                    text = currentPlan,
+                                    color = if (isAiRunning) Color.Cyan else Color.Green,
+                                    fontSize = 13.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    lineHeight = 20.sp
+                                )
+                            }
                         }
                     } else if (agentViewMode == 3) {
                         Text("Long-Term Memory:", color = Color.Yellow, fontSize = 12.sp)
@@ -968,3 +992,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: b9436513
 
 // Build Trigger: df4aaa43
+
+// Build Trigger: 205a442a

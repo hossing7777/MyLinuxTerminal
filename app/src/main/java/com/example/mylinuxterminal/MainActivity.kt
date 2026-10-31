@@ -217,8 +217,7 @@ fun TerminalScreen() {
     var testResult by remember { mutableStateOf("") }
     
         val dbHelper = remember { MemoryDbHelper(context) }
-    var showMemoryTab by remember { mutableStateOf(false) }
-    var showPlanTab by remember { mutableStateOf(false) }
+    var agentViewMode by remember { mutableStateOf(0) } // 0=Chat, 1=Plan, 2=Memory
     var currentPlan by remember { mutableStateOf("") }
     
     // File Picker برای ارسال فایل به هوش مصنوعی
@@ -699,27 +698,31 @@ fun TerminalScreen() {
             shape = RoundedCornerShape(16.dp),
             title = { 
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (showMemoryTab) "🧠 Memory" else if (showPlanTab) "📋 Plan" else "AI Agent", color = Color.Cyan, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        IconButton(onClick = { showMemoryTab = !showMemoryTab; showPlanTab = false }) { 
-                            Icon(Icons.Default.List, "Memory", tint = if(showMemoryTab) Color.Yellow else Color.Gray) 
-                        }
-                        IconButton(onClick = { showPlanTab = !showPlanTab; showMemoryTab = false }) { 
-                            Icon(Icons.Default.DateRange, "Plan", tint = if(showPlanTab) Color.Yellow else Color.Gray) 
-                        }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("AI Agent", color = Color.Cyan, fontWeight = FontWeight.Bold)
+                        IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
                     }
-                    IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
                 }
             },
             text = {
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    if (showMemoryTab) {
+                    TabRow(
+                        selectedTabIndex = agentViewMode,
+                        containerColor = Color(0xFF1E1E1E),
+                        contentColor = Color.Cyan
+                    ) {
+                        Tab(selected = agentViewMode == 0, onClick = { agentViewMode = 0 }, text = { Text("Chat") })
+                        Tab(selected = agentViewMode == 1, onClick = { agentViewMode = 1 }, text = { Text("Plan") })
+                        Tab(selected = agentViewMode == 2, onClick = { agentViewMode = 2 }, text = { Text("Memory") })
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    if (agentViewMode == 2) {
                         Text("Long-Term Memory:", color = Color.Yellow, fontSize = 12.sp)
                         Box(modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black).padding(8.dp).verticalScroll(rememberScrollState())) {
                             Text(dbHelper.getMemoryContext(), color = Color.LightGray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
                         }
-                    } else if (showPlanTab) {
+                    } else if (agentViewMode == 1) {
                         Text("Current Plan:", color = Color.Yellow, fontSize = 12.sp)
                         Box(modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black).padding(8.dp).verticalScroll(rememberScrollState())) {
                             Text(if (currentPlan.isBlank()) "No active plan." else currentPlan, color = Color.Green, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
@@ -1117,3 +1120,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: af262c53
 
 // Build Trigger: d7678f25
+
+// Build Trigger: 60c14902

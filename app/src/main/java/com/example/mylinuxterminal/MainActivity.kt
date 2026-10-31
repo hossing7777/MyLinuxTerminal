@@ -77,7 +77,7 @@ data class ChatSession(
     val id: String,
     val title: String,
     val timestamp: Long,
-    val history: JSONArray
+    val logs: List<String>
 )
 
 class MainActivity : ComponentActivity() {
@@ -738,14 +738,12 @@ fun TerminalScreen() {
             shape = RoundedCornerShape(16.dp),
             title = { 
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("AI Agent", color = Color.Cyan, fontWeight = FontWeight.Bold)
-                        IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
-                    }
+                    Text("AI Agent", color = Color.Cyan, fontWeight = FontWeight.Bold)
+                    IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
                 }
             },
             text = {
-                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Column {
                     TabRow(
                         selectedTabIndex = agentViewMode,
                         containerColor = Color(0xFF1E1E1E),
@@ -759,7 +757,6 @@ fun TerminalScreen() {
                     Spacer(modifier = Modifier.height(12.dp))
 
                     if (agentViewMode == 0) {
-                        // ---------- CHAT TAB ----------
                         if (!isAiRunning) {
                             OutlinedTextField(
                                 value = aiPrompt,
@@ -787,7 +784,6 @@ fun TerminalScreen() {
                             }
                         }
                     } else if (agentViewMode == 1) {
-                        // ---------- HISTORY TAB ----------
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text("Chat History:", color = Color.Yellow, fontSize = 14.sp)
                             Button(onClick = { 
@@ -822,13 +818,11 @@ fun TerminalScreen() {
                             }
                         }
                     } else if (agentViewMode == 2) {
-                        // ---------- PLAN TAB ----------
                         Text("Current Plan:", color = Color.Yellow, fontSize = 12.sp)
                         Box(modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black).padding(8.dp).verticalScroll(rememberScrollState())) {
                             Text(if (currentPlan.isBlank()) "No active plan." else currentPlan, color = Color.Green, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
                         }
                     } else if (agentViewMode == 3) {
-                        // ---------- MEMORY TAB ----------
                         Text("Long-Term Memory:", color = Color.Yellow, fontSize = 12.sp)
                         Box(modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black).padding(8.dp).verticalScroll(rememberScrollState())) {
                             Text(dbHelper.getMemoryContext(), color = Color.LightGray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
@@ -837,7 +831,7 @@ fun TerminalScreen() {
 
                     Spacer(modifier = Modifier.height(16.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        , color = Color.LightGray, fontSize = 12.sp)
+                        Text("گزارش زنده:", color = Color.LightGray, fontSize = 12.sp)
                         TextButton(onClick = { agentLogs.clear() }) { Text("پاک کردن", color = Color.Red, fontSize = 12.sp) }
                     }
                     LazyColumn(modifier = Modifier.height(200.dp).fillMaxWidth().background(Color.Black, RoundedCornerShape(8.dp)).padding(8.dp)) {
@@ -846,23 +840,6 @@ fun TerminalScreen() {
                 }
             },
             confirmButton = { if (!isAiRunning) TextButton(onClick = { showAiDialog = false }) { Text("بستن", color = Color.Cyan) } }
-        )
-    }
-
-    
-    if (showHistoryDialog) {
-        AlertDialog(
-            onDismissRequest = { showHistoryDialog = false },
-            title = { Text("Agent History", color = Color.Cyan) },
-            text = {
-                Column(modifier = Modifier.heightIn(max = 400.dp)) {
-                    Text("Chat History:", color = Color.Yellow)
-                    Box(modifier = Modifier.height(150.dp).verticalScroll(rememberScrollState()).background(Color.Black).padding(8.dp)) {
-                        Text(historyContent, color = Color.LightGray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { showHistoryDialog = false }) { Text("Close", color = Color.Cyan) } }
         )
     }
 
@@ -1208,3 +1185,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: 2ab06967
 
 // Build Trigger: c1deaf5f
+
+// Build Trigger: ade54022

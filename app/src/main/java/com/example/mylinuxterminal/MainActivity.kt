@@ -413,7 +413,8 @@ fun TerminalScreen() {
                     You are an Advanced Reasoning Agent (ReAct).
                     1. FIRST, output your thought process: [THOUGHT] your reasoning here [/THOUGHT]
                     2. SECOND, output a plan: [PLAN] 1. ... 2. ... [/PLAN]
-                    3. THIRD, if you need hardware access, output: [HARDWARE] speak Hello World [/HARDWARE], [HARDWARE] wifi_on [/HARDWARE], [HARDWARE] bt_on [/HARDWARE], [HARDWARE] brightness 200 [/HARDWARE].
+                    3. THIRD, if you need hardware access, output ONLY the hardware tag: [HARDWARE] speak Hello World [/HARDWARE], [HARDWARE] wifi_on [/HARDWARE], [HARDWARE] bt_on [/HARDWARE], [HARDWARE] brightness 200 [/HARDWARE].
+   CRITICAL: DO NOT write Python code to control hardware (like brightnessctl or /sys/class/backlight). You are in an Android PRoot environment. Python has NO access to Android hardware. You MUST use the [HARDWARE] tag for hardware control.
                     4. FINALLY, write the Python code to accomplish the terminal task.
                     Reply with the [THOUGHT], [PLAN], [HARDWARE] (optional), and python code block.
                 """.trimIndent()
@@ -686,6 +687,23 @@ fun TerminalScreen() {
                         }
                     }
                     Button(onClick = { prefs.edit().putString("api_key", apiKey).apply(); Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show() }, modifier = Modifier.padding(top = 12.dp)) { Text("ذخیره کلید") }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = { 
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                if (!Settings.System.canWrite(context)) {
+                                    val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS)
+                                    intent.data = Uri.parse("package:${context.packageName}")
+                                    context.startActivity(intent)
+                                } else {
+                                    Toast.makeText(context, "Already granted", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF008080))
+                    ) { Text("Grant Brightness Permission (مجوز روشنایی)") }
                 }
             },
             confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Close", color = Color.Cyan) } }
@@ -911,3 +929,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
         entry = tarIn.nextEntry
     }
 }
+
+// Build Trigger: 37d83d6b

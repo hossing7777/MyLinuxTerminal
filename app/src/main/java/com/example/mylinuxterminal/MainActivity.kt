@@ -428,10 +428,13 @@ fun TerminalScreen() {
                         continue
                     }
                     
-                    agentLogs.add("📜 Code Extracted. Running...")
-                    val b64Code = android.util.Base64.encodeToString(rawCode.toByteArray(), android.util.Base64.NO_WRAP)
-                    val cmd = "if ! command -v python3 >/dev/null 2>&1; then apk add python3 >/dev/null 2>&1; fi; " +
-                              "echo '$b64Code' | base64 -d > /root/ai_script.py && python3 /root/ai_script.py 2>&1"
+                    agentLogs.add("📜 Code Extracted. Writing to disk...")
+                    // 👇 نوشتن مستقیم کد توسط کاتلین (حل مشکل بافر PTY) 👇
+                    val scriptFile = File(context.filesDir, "ai_script.py")
+                    scriptFile.writeText(rawCode)
+                    
+                    agentLogs.add("▶️ Executing Python script...")
+                    val cmd = "if ! command -v python3 >/dev/null 2>&1; then apk add python3 >/dev/null 2>&1; fi; python3 /host_files/ai_script.py 2>&1"
                     
                     val output = executeCommandAndWait(cmd)
                     
@@ -482,6 +485,7 @@ fun TerminalScreen() {
                             agentLogs.add("❌ Terminal Error detected! Asking AI to fix...")
                             currentPrompt = "The code failed with this error:\n$cleanOutputForAI\n\n" +
                                             "Here is the failed code:\n$rawCode\n\n" +
+                                            "IMPORTANT: Do NOT print large blocks of text (like full Persian reports or ASCII art) to the terminal. Save them to files instead and just print a short summary. " +
                                             "Please fix the error and provide the COMPLETE corrected Python code."
                         }
                     } else {
@@ -948,3 +952,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
         entry = tarIn.nextEntry
     }
 }
+
+// Build Trigger: 6cd6435c

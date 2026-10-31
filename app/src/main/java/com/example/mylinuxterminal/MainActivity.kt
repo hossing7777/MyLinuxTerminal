@@ -471,9 +471,56 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
                     }.joinToString("\n")
                     agentLogs.add("📄 Output:\n$cleanOutput")
                     
-                    if (output.contains("Traceback") || output.contains("SyntaxError") || output.contains("NameError") || output.contains("not found")) {
-                        agentLogs.add("❌ Error detected! Asking AI to fix the code...")
-                        currentPrompt = "The code failed with this error:\n$output\n\nPlease fix it and provide the complete python code."
+                    val cleanOutputForAI = output.lines().filter { 
+                        !it.contains("stty -echo") && !it.contains("::CMD_DONE") && 
+                        !it.contains("base64 -d") && !it.contains("apk add python3") && it.isNotBlank() 
+                    }.joinToString("
+")
+                    
+                    // 👇 لایه صحت‌سنجی جدید (Verification Layer) 👇
+                    var verificationPassed = true
+                    var verificationLog = ""
+                    
+                    val pathRegex = Regex("""(/sdcard/Download/[a-zA-Z0-9_\-\./]+)""")
+                    val pathsToVerify = pathRegex.findAll(userRequest).map { it.value }.toList()
+                    
+                    if (pathsToVerify.isNotEmpty()) {
+                        agentLogs.add("🔍 Verifying outputs at requested paths...")
+                        for (path in pathsToVerify) {
+                            val lsOutput = executeCommandAndWait("ls -la $path 2>&1")
+                            if (lsOutput.contains("No such file or directory") || lsOutput.contains("not found") || lsOutput.isBlank()) {
+                                verificationPassed = false
+                                verificationLog += "❌ Path not found or empty: $path
+"
+                            } else {
+                                verificationLog += "✅ Path exists: $path
+$lsOutput
+"
+                            }
+                        }
+                    }
+
+                    val hasTerminalError = output.contains("Traceback", true) || output.contains("SyntaxError", true) || 
+                                           output.contains("NameError", true) || output.contains("not found", true) || 
+                                           output.contains("Error:", true) || output.contains("Exception", true) || 
+                                           output.contains("Timed Out", true)
+
+                    if (hasTerminalError || !verificationPassed) {
+                        if (hasTerminalError) {
+                            agentLogs.add("❌ Terminal Error detected! Asking AI to fix...")
+                        } else {
+                            agentLogs.add("❌ Verification Failed: Files were not created! Asking AI to fix...")
+                        }
+                        
+                        currentPrompt = "I ran your code. Here is the terminal output:
+$cleanOutputForAI
+
+" +
+                                        "I also verified the requested files. Here is the result:
+$verificationLog
+
+" +
+                                        "The files are missing or there was an error. Please fix your code and provide the COMPLETE corrected Python code. Make sure it actually creates the files."
                     } else {
                         agentLogs.add("✅ Task completed successfully!")
                         saveAgentLogs()
@@ -939,3 +986,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
         entry = tarIn.nextEntry
     }
 }
+
+// Build Trigger Verify: 0d650523

@@ -4,8 +4,11 @@ import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
@@ -19,7 +22,6 @@ object HardwareBridge {
     private var appContext: Context? = null
     private var currentActivity: WeakReference<Activity>? = null
 
-    /** جایگزین initTts - یک بار در onCreate صدا زده می‌شود */
     fun init(context: Context) {
         appContext = context.applicationContext
         initTts(context)
@@ -27,9 +29,7 @@ object HardwareBridge {
 
     fun initTts(context: Context) {
         tts = TextToSpeech(context) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.US
-            }
+            if (status == TextToSpeech.SUCCESS) tts?.language = Locale.US
         }
     }
 
@@ -40,93 +40,76 @@ object HardwareBridge {
     fun getContext(): Context? = appContext
 
     fun speak(text: String): String {
-        return try {
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "hw_tts")
-            "Spoke: $text"
-        } catch (e: Exception) {
-            "Error speaking: ${e.message ?: e.javaClass.simpleName}"
-        }
+        return try { tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "hw_tts"); "Spoke: $text" } 
+        catch (e: Exception) { "Error: ${e.message}" }
     }
 
     fun toggleWifi(context: Context, enable: Boolean): String {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val intent = Intent(Settings.ACTION_WIFI_SETTINGS)
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                val intent = Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(intent)
-                "WiFi settings opened (manual toggle needed on API 29+)"
+                "WiFi settings opened"
             } else {
                 @Suppress("DEPRECATION")
                 val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
                 @Suppress("DEPRECATION")
                 wifiManager.isWifiEnabled = enable
-                "WiFi turned ${if (enable) "ON" else "OFF"}"
+                "WiFi ${if (enable) "ON" else "OFF"}"
             }
-        } catch (e: Exception) {
-            "Error: ${e.message ?: e.javaClass.simpleName}"
-        }
+        } catch (e: Exception) { "Error: ${e.message}" }
     }
 
     fun toggleBluetooth(enable: Boolean): String {
         return try {
-            val bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
-                ?: return "Bluetooth not supported"
+            val adapter = BluetoothAdapter.getDefaultAdapter() ?: return "Bluetooth not supported"
             @Suppress("DEPRECATION")
-            if (enable) bluetoothAdapter.enable() else bluetoothAdapter.disable()
+            if (enable) adapter.enable() else adapter.disable()
             "Bluetooth ${if (enable) "ON" else "OFF"}"
-        } catch (e: Exception) {
-            "Error: ${e.message ?: e.javaClass.simpleName}"
-        }
+        } catch (e: Exception) { "Error: ${e.message}" }
     }
 
-    /**
-     * روشنایی را هم در تنظیمات سیستم ذخیره می‌کند و هم فوراً روی پنجره‌ی فعال اعمال می‌کند.
-     * level: 1..255
-     */
     fun setBrightness(context: Context, level: Int): String {
         return try {
             val clamped = level.coerceIn(1, 255)
-
-            // ---- ۱) ذخیره در تنظیمات سیستم (پایدار) ----
-            var systemPart = "skipped(no WRITE_SETTINGS)"
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.System.canWrite(context)) {
+                Settings.System.putInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+                Settings.System.putInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, clamped)
+            }
+            currentActivity?.get()?.runOnUiThread {
                 try {
-                    Settings.System.putInt(
-                        context.contentResolver,
-                        Settings.System.SCREEN_BRIGHTNESS_MODE,
-                        Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
-                    )
-                    Settings.System.putInt(
-                        context.contentResolver,
-                        Settings.System.SCREEN_BRIGHTNESS,
-                        clamped
-                    )
-                    systemPart = "system=$clamped"
-                } catch (e: Exception) {
-                    systemPart = "system_err=${e.message ?: e.javaClass.simpleName}"
-                }
+                    val params = currentActivity?.get()?.window?.attributes
+                    params?.screenBrightness = clamped / 255f
+                    currentActivity?.get()?.window?.attributes = params
+                } catch (e: Exception) { Log.e(TAG, "window brightness failed", e) }
             }
+            "Brightness set to $clamped"
+        } catch (e: Exception) { "Error: ${e.message}" }
+    }
 
-            // ---- ۲) اعمال فوری روی Window (اثر آنی) ----
-            var windowPart = "no_activity"
-            val activity = currentActivity?.get()
-            if (activity != null) {
-                activity.runOnUiThread {
-                    try {
-                        val params = activity.window.attributes
-                        params.screenBrightness = clamped / 255f
-                        activity.window.attributes = params
-                    } catch (e: Exception) {
-                        Log.e(TAG, "window brightness failed", e)
-                    }
-                }
-                windowPart = "window=${"%.2f".format(clamped / 255f)}"
+    // 🆕 قابلیت ویبره
+    fun vibrate(context: Context, ms: Long): String {
+        return try {
+            val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(ms)
             }
+            "Vibrated for ${ms}ms"
+        } catch (e: Exception) { "Error vibrating: ${e.message}" }
+    }
 
-            "Brightness set to $clamped ($systemPart, $windowPart)"
-        } catch (e: Exception) {
-            "Error setting brightness: ${e.message ?: e.javaClass.simpleName}"
-        }
+    // 🆕 قابلیت کنترل صدا (0 تا 100)
+    fun setVolume(context: Context, level: Int): String {
+        return try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            val targetVol = (level.coerceIn(0, 100) * maxVol / 100)
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0)
+            "Volume set to $level%"
+        } catch (e: Exception) { "Error setting volume: ${e.message}" }
     }
 
     fun getSpeechIntent(): Intent {

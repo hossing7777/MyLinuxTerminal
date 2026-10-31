@@ -22,9 +22,7 @@ object BrowserServer {
                     val socket = serverSocket?.accept() ?: break
                     launch { handleClient(socket) }
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
     }
 
@@ -33,36 +31,33 @@ object BrowserServer {
             val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
             val requestLine = reader.readLine() ?: return
 
-            // Parse: GET /browser?action=goto&arg=... HTTP/1.1
             if (requestLine.startsWith("GET /hardware")) {
                 val queryString = requestLine.split(" ")[1].substringAfter("?")
                 val params = parseQuery(queryString)
                 val action = params["action"] ?: ""
                 val arg = params["arg"] ?: ""
-                val context = BrowserBridge.webView?.context
+                val context = HardwareBridge.getContext()
 
                 val result = when (action) {
-                    "speak" -> { HardwareBridge.speak(arg); "Spoke: $arg" }
+                    "speak" -> HardwareBridge.speak(arg)
                     "wifi_on" -> if (context != null) HardwareBridge.toggleWifi(context, true) else "Context null"
                     "wifi_off" -> if (context != null) HardwareBridge.toggleWifi(context, false) else "Context null"
                     "bt_on" -> HardwareBridge.toggleBluetooth(true)
                     "bt_off" -> HardwareBridge.toggleBluetooth(false)
-                    "brightness" -> {
-                        val level = arg.toIntOrNull() ?: 128
-                        if (context != null) HardwareBridge.setBrightness(context, level) else "Context null"
-                    }
-                    else -> "Unknown hardware action"
+                    "brightness" -> if (context != null) HardwareBridge.setBrightness(context, arg.toIntOrNull() ?: 128) else "Context null"
+                    "vibrate" -> if (context != null) HardwareBridge.vibrate(context, arg.toLongOrNull() ?: 500L) else "Context null"
+                    "volume" -> if (context != null) HardwareBridge.setVolume(context, arg.toIntOrNull() ?: 50) else "Context null"
+                    else -> "Unknown hardware action: $action"
                 }
 
                 val response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\n\r\n$result"
-                val writer = PrintWriter(socket.getOutputStream(), true)
-                writer.print(response)
-                writer.flush()
+                PrintWriter(socket.getOutputStream(), true).apply { print(response); flush() }
                 return
-            } else if (requestLine.startsWith("GET /browser")) {
+            } 
+            // (بخش /browser همین‌طور که بود باقی می‌ماند)
+            else if (requestLine.startsWith("GET /browser")) {
                 val queryString = requestLine.split(" ")[1].substringAfter("?")
                 val params = parseQuery(queryString)
-                
                 val action = params["action"] ?: ""
                 val arg = params["arg"] ?: ""
 
@@ -75,35 +70,22 @@ object BrowserServer {
                     "type" -> BrowserBridge.typeText(arg)
                     "send" -> BrowserBridge.clickSend()
                     "extract_code" -> BrowserBridge.extractCode()
-                    "sleep" -> {
-                        val ms = arg.toLongOrNull() ?: 3000L
-                        kotlinx.coroutines.delay(ms)
-                        "Slept for ${ms}ms"
-                    }
+                    "sleep" -> { kotlinx.coroutines.delay(arg.toLongOrNull() ?: 3000L); "Slept" }
                     else -> "Error: Unknown action '$action'"
                 }
-
                 val response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\n\r\n$result"
-                val writer = PrintWriter(socket.getOutputStream(), true)
-                writer.print(response)
-                writer.flush()
+                PrintWriter(socket.getOutputStream(), true).apply { print(response); flush() }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        } finally {
-            socket.close()
-        }
+        } catch (e: Exception) { e.printStackTrace() } 
+        finally { socket.close() }
     }
 
     private fun parseQuery(query: String): Map<String, String> {
         if (query.isEmpty()) return emptyMap()
         return query.split("&").associate { 
             val parts = it.split("=", limit = 2)
-            if (parts.size == 2) {
-                URLDecoder.decode(parts[0], "UTF-8") to URLDecoder.decode(parts[1], "UTF-8")
-            } else {
-                URLDecoder.decode(parts[0], "UTF-8") to ""
-            }
+            if (parts.size == 2) URLDecoder.decode(parts[0], "UTF-8") to URLDecoder.decode(parts[1], "UTF-8")
+            else URLDecoder.decode(parts[0], "UTF-8") to ""
         }
     }
 }

@@ -435,6 +435,26 @@ fun TerminalScreen() {
                 delay(5000)
                 
                 var iteration = 0
+                var currentPrompt = """
+                        PAST KNOWLEDGE:
+                        $pastKnowledge
+                        
+                        TASK: $userRequest.
+                        
+                        INSTRUCTIONS:
+                        You are an Advanced Reasoning Agent (ReAct).
+                        1. FIRST, output your thought process: [THOUGHT] your reasoning here [/THOUGHT]
+                        2. SECOND, output a plan: [PLAN] 1. ... 2. ... [/PLAN]
+                        3. THIRD, if you need hardware access, output: [HARDWARE] speak Hello World [/HARDWARE], [HARDWARE] wifi_on [/HARDWARE], [HARDWARE] bt_on [/HARDWARE].
+                        4. FINALLY, write the Python code to accomplish the terminal task.
+                        Reply with the [THOUGHT], [PLAN], [HARDWARE] (optional), and python code block.
+                    """.trimIndent()
+                    
+                    agentLogs.add("🌐 Navigating to Duck.ai...")
+                BrowserBridge.loadUrl("https://duck.ai")
+                delay(5000)
+                
+                var iteration = 0
                 var currentPrompt = "PAST KNOWLEDGE:
 $pastKnowledge
 
@@ -471,41 +491,40 @@ INSTRUCTIONS:
                     var rawCode = BrowserBridge.extractCode()
                     
                     // استخراج تفکر (Thought)
-                    val thoughtRegex = Regex("\\[THOUGHT\\]([\\s\\S]*?)\\[/THOUGHT\\]")
-                    thoughtRegex.find(rawCode)?.let { agentLogs.add("🧠 Thought: " + it.groupValues[1].trim().take(50) + "...") }
+                    if (rawCode.contains("[THOUGHT]")) {
+                        val thought = rawCode.substringAfter("[THOUGHT]").substringBefore("[/THOUGHT]").trim()
+                        agentLogs.add("🧠 Thought: ${thought.take(50)}...")
+                    }
                     
-                    // استخراج و اجرای دستورات سخت‌افزاری
-                    val hwRegex = Regex("\\[HARDWARE\\]([\\s\\S]*?)\\[/HARDWARE\\]")
-                    hwRegex.findAll(rawCode).forEach { match ->
-                        val hwCmd = match.groupValues[1].trim()
+                    // اجرای دستورات سخت‌افزاری
+                    if (rawCode.contains("[HARDWARE]")) {
+                        val hwCmd = rawCode.substringAfter("[HARDWARE]").substringBefore("[/HARDWARE]").trim()
                         agentLogs.add("⚙️ Hardware Command: $hwCmd")
                         try {
-                            val url = java.net.URL("http://127.0.0.1:8081/hardware?action=" + java.net.URLEncoder.encode(hwCmd.substringBefore(" "), "UTF-8") + "&arg=" + java.net.URLEncoder.encode(hwCmd.substringAfter(" ", ""), "UTF-8"))
+                            val action = hwCmd.substringBefore(" ")
+                            val arg = hwCmd.substringAfter(" ", "")
+                            val url = java.net.URL("http://127.0.0.1:8081/hardware?action=" + java.net.URLEncoder.encode(action, "UTF-8") + "&arg=" + java.net.URLEncoder.encode(arg, "UTF-8"))
                             url.openStream().use { stream -> stream.bufferedReader().readText() }
                         } catch (e: Exception) { agentLogs.add("❌ HW Error: ${e.message}") }
                     }
                     
-                    // استخراج نقشه راه
-                    val planRegex = Regex("\\[PLAN\\]([\\s\\S]*?)\\[/PLAN\\]")
-                    planRegex.find(rawCode)?.let { currentPlan = it.groupValues[1].trim() }
-                    
-                    // پاکسازی کد از تگ‌ها برای اجرای نهایی
-                    rawCode = rawCode.replace(thoughtRegex, "").replace(hwRegex, "").replace(planRegex, "")
-                    
-                    // استخراج پلن (To-Do List) از پاسخ هوش مصنوعی
-                    val planRegex = Regex("\\[PLAN\\]([\\s\\S]*?)\\[/PLAN\\]")
-                    val planMatch = planRegex.find(rawCode)
-                    if (planMatch != null) {
-                        currentPlan = planMatch.groupValues[1].trim()
-                        agentLogs.add("📋 Plan Extracted!")
-                    } else {
-                        // اگر هوش مصنوعی پلن نداد، یک پلن پیش‌فرض بساز
-                        currentPlan = "1. Analyze request\n2. Write Python code\n3. Execute and verify\n4. Fix errors if any"
+                    // استخراج نقشه راه (Plan)
+                    if (rawCode.contains("[PLAN]")) {
+                        currentPlan = rawCode.substringAfter("[PLAN]").substringBefore("[/PLAN]").trim()
                     }
-                    // حذف بلاک پلن از کد تا فقط کد خالص برای اجرا بماند
-                    rawCode = rawCode.replace(planMatch?.value ?: "", "")
-                    rawCode = rawCode.replace("\\u003C", "<").replace("\\u003E", ">").replace("&lt;", "<").replace("&gt;", ">").replace("\\u0026", "&")
                     
+                    // پاکسازی کد از تگ‌ها
+                    rawCode = rawCode.replace("[THOUGHT]", "").replace("[/THOUGHT]", "")
+                                     .replace("[HARDWARE]", "").replace("[/HARDWARE]", "")
+                                     .replace("[PLAN]", "").replace("[/PLAN]", "")
+                                     
+                    // حذف هر متن اضافی که خارج از بلاک کد باشد
+                    if (rawCode.contains("```python")) {
+                        rawCode = rawCode.substringAfter("```python").substringBefore("```").trim()
+                    } else if (rawCode.contains("```")) {
+                        rawCode = rawCode.substringAfter("```").substringBefore("```").trim()
+                    }
+
                     if (rawCode == "NO_CODE_FOUND" || rawCode.isBlank() || rawCode.contains("Error: Browser not ready")) {
                         agentLogs.add("⚠️ No valid code found. Retrying...")
                         currentPrompt = "Please provide a valid Python code block for: $userRequest"
@@ -1036,3 +1055,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: 205a442a
 
 // Build Trigger: 45545e0f
+
+// Build Trigger: 5f785e7f

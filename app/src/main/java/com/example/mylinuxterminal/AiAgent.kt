@@ -120,7 +120,7 @@ class AiAgent {
     }
 
     suspend fun testConnection(apiKey: String, modelName: String): String = withContext(Dispatchers.IO) {
-        if (apiKey.isBlank()) return@withContext "کلید خالی است."
+        if (apiKey.isBlank()) return@withContext "API Key is empty."
         val jsonBody = JSONObject().apply {
             put("model", modelName)
             put("messages", JSONArray().apply { put(JSONObject().put("role", "user").put("content", "Say OK")) })
@@ -130,11 +130,11 @@ class AiAgent {
         val request = Request.Builder().url(endpoint).addHeader("Authorization", "Bearer $apiKey").post(requestBody).build()
         try {
             client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) return@withContext "✅ اتصال برقرار شد."
-                else return@withContext "❌ خطای سرور: ${response.code}"
+                if (response.isSuccessful) return@withContext "✅ Connection successful."
+                else return@withContext "❌ Server error: ${response.code}"
             }
         } catch (e: IOException) {
-            return@withContext "❌ خطای شبکه: ${e.message}"
+            return@withContext "❌ Network error: ${e.message}"
         }
     }
 }

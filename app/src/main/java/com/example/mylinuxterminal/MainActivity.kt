@@ -648,7 +648,7 @@ fun TerminalScreen() {
                         if (!isAiRunning) {
                             OutlinedTextField(
                                 value = aiPrompt, onValueChange = { aiPrompt = it },
-                                placeholder = { Text("درخواست خود را بنویسید...", color = Color.Gray) },
+                                placeholder = { Text("Type your request here...", color = Color.Gray) },
                                 modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
                                 colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
                             )
@@ -662,13 +662,13 @@ fun TerminalScreen() {
                                         Toast.makeText(context, "Speech recognition not available", Toast.LENGTH_SHORT).show()
                                     }
                                 }) { Icon(Icons.Default.Search, "Speak", tint = Color.Cyan) }
-                                Button(onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))) { Text("شروع", fontSize = 16.sp) }
+                                Button(onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))) { Text("Start", fontSize = 16.sp) }
                             }
                         } else {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.Cyan, strokeWidth = 3.dp)
                                 Spacer(modifier = Modifier.width(12.dp))
-                                Text("در حال اجرا... ($aiProgress%)", color = Color.Yellow)
+                                Text("Running... ($aiProgress%)", color = Color.Yellow)
                             }
                         }
                     } else if (agentViewMode == 1) {
@@ -717,15 +717,15 @@ fun TerminalScreen() {
 
                     Spacer(modifier = Modifier.height(16.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("گزارش زنده:", color = Color.LightGray, fontSize = 12.sp)
-                        TextButton(onClick = { agentLogs.clear() }) { Text("پاک کردن", color = Color.Red, fontSize = 12.sp) }
+                        Text("Live Log:", color = Color.LightGray, fontSize = 12.sp)
+                        TextButton(onClick = { agentLogs.clear() }) { Text("Clear", color = Color.Red, fontSize = 12.sp) }
                     }
                     LazyColumn(modifier = Modifier.height(200.dp).fillMaxWidth().background(Color.Black, RoundedCornerShape(8.dp)).padding(8.dp)) {
                         items(agentLogs) { log -> Text(log, color = Color(0xFF00FF00), fontSize = 11.sp, fontFamily = FontFamily.Monospace) }
                     }
                 }
             },
-            confirmButton = { if (!isAiRunning) TextButton(onClick = { showAiDialog = false }) { Text("بستن", color = Color.Cyan) } }
+            confirmButton = { if (!isAiRunning) TextButton(onClick = { showAiDialog = false }) { Text("Close", color = Color.Cyan) } }
         )
     }
 
@@ -747,7 +747,7 @@ fun TerminalScreen() {
                             }
                         }
                     }
-                    Button(onClick = { prefs.edit().putString("api_key", apiKey).apply(); Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show() }, modifier = Modifier.padding(top = 12.dp)) { Text("ذخیره کلید") }
+                    Button(onClick = { prefs.edit().putString("api_key", apiKey).apply(); Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show() }, modifier = Modifier.padding(top = 12.dp)) { Text("Save API Key") }
                     
                     Spacer(modifier = Modifier.height(8.dp))
                     Button(
@@ -764,7 +764,7 @@ fun TerminalScreen() {
                         },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF008080))
-                    ) { Text("Grant Brightness Permission (مجوز روشنایی)") }
+                    ) { Text("Grant Brightness Permission") }
                 }
             },
             confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Close", color = Color.Cyan) } }

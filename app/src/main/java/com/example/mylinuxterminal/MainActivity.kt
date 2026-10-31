@@ -975,7 +975,17 @@ fun TerminalScreen() {
                     textStyle = TextStyle(color = Color.White, fontFamily = FontFamily.Monospace, fontSize = fontSize),
                     modifier = Modifier.weight(1f).focusRequester(focusRequester), singleLine = true, enabled = isExtracted,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { sendToPty(inputText + "\n"); inputText = ""; focusRequester.requestFocus() })
+                    keyboardActions = KeyboardActions(onDone = { 
+                        val cmd = inputText.trim()
+                        if (cmd == "clear" || cmd == "cls") {
+                            outputLines.clear()
+                            sendToPty("clear\n") // اجرای دستور واقعی در لینوکس برای هماهنگی
+                        } else {
+                            sendToPty(inputText + "\n")
+                        }
+                        inputText = ""
+                        focusRequester.requestFocus() 
+                    })
                 )
             }
         }
@@ -1245,3 +1255,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: 4cbe617f
 
 // Build Trigger: 343af96e
+
+// Build Trigger: 1cab1d4f

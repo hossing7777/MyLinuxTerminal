@@ -457,127 +457,43 @@ fun TerminalScreen() {
                         }
 
                         withContext(Dispatchers.Main) {
-                            val lines = cleanText.split("\n")
-                            for (line in lines) {
-                                if (line.isNotBlank() && !line.contains("::CMD_DONE_")) {
-                                    outputLines.add(line)
-                                    if (outputLines.size > 2000) outputLines.removeAt(0)
+                            // مدیریت دستور clear (ANSI clear screen)
+                            if (cleanText.contains("\u001B[2J") || cleanText.contains("\u001B[H\u001B[2J")) {
+                                outputLines.clear()
+                            }
+                            
+                            val rawLines = cleanText.split("\n")
+                            for (rawLine in rawLines) {
+                                if (rawLine.isBlank()) continue
+                                
+                                // مدیریت کاراکتر \r برای نوار پیشرفت (Progress Bar)
+                                val subLines = rawLine.split("\r")
+                                for (subLine in subLines) {
+                                    var trimmed = subLine.trim()
+                                    if (trimmed.isBlank() || trimmed.contains("::CMD_DONE_")) continue
+                                    
+                                    // حذف اعداد مزاحم ابتدای خط (مثل 7 یا 8)
+                                    if (trimmed.matches(Regex("^[0-9]$"))) continue 
+                                    
+                                    trimmed = trimmed.replace(Regex("^[0-9](?=\\\\()"), "")
+                                    trimmed = trimmed.replace(Regex("^[0-9]\\\\s+(?=\\\\d+%)"), "")
+                                    
+                                    if (trimmed.isBlank()) continue
+
+                                    // آپدیت نوار پیشرفت در همان خط به جای خط جدید
+                                    if (trimmed.contains("█") || (trimmed.contains("%") && trimmed.length < 40)) {
+                                        if (outputLines.isNotEmpty() && (outputLines.last().contains("█") || outputLines.last().contains("%"))) {
+                                            outputLines[outputLines.lastIndex] = trimmed
+                                        } else {
+                                            outputLines.add(trimmed)
+                                        }
+                                    } else {
+                                        outputLines.add(trimmed)
+                                    }
                                 }
                             }
                             listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
-                        }
-                    } else break
-                }
-            }
-        }
-    }
-
-    LaunchedEffect(Unit) { 
-        loadAllChats()
-        extractLinux(context, mutableListOf<String>())
-        isExtracted = true
-        checkStoragePermission()
-        if (setupDoneFile.exists()) {
-            startTerminal(emptyList())
-        } else {
-            showPackageDialog = true
-        }
-    }
-
-    fun runShellAgent(userRequest: String) {
-        isAiRunning = true
-        aiProgress = 5
-        agentLogs.clear()
-        agentLogs.add("🚀 Autonomous Shell Agent Started (Enterprise Mode)...")
-        agentLogs.add("📝 Request: $userRequest")
-        
-        // خواندن حافظه بلندمدت
-        val pastKnowledge = dbHelper.getMemoryContext()
-        if (pastKnowledge.isNotBlank()) {
-            agentLogs.add("🧠 Loaded Long-Term Memory.")
-        }
-        
-        coroutineScope.launch {
-            try {
-                if (terminalState.ptyFd <= 0) {
-                    agentLogs.add("❌ Terminal is not ready.")
-                    isAiRunning = false
-                    return@launch
-                }
-                
-                agentLogs.add("🌐 Navigating to Duck.ai...")
-                BrowserBridge.loadUrl("https://duck.ai")
-                delay(5000)
-                
-                var iteration = 0
-                var currentPrompt = "PAST KNOWLEDGE (Use this to avoid past mistakes):\n$pastKnowledge\n\nTASK: $userRequest.\n\nINSTRUCTIONS:\n1. Write a Python script to accomplish the task.\n2. If possible, write a separate test script to verify the output.\n3. Reply ONLY with the python code inside a markdown block."
-                
-                while (iteration < 7 && isAiRunning) {
-                    iteration++
-                    aiProgress = 10 + (iteration * 10)
-                    agentLogs.add("🔄 Attempt $iteration/7...")
-                    
-                    agentLogs.add("⌨️ Sending prompt to AI...")
-                    BrowserBridge.typeText(currentPrompt)
-                    delay(1000)
-                    BrowserBridge.clickSend()
-                    
-                    agentLogs.add("⏳ Waiting for response (15s)...")
-                    delay(15000)
-                    
-                    agentLogs.add("📖 Extracting code...")
-                    var rawCode = BrowserBridge.extractCode()
-                    rawCode = rawCode.replace("\\u003C", "<").replace("\\u003E", ">").replace("&lt;", "<").replace("&gt;", ">").replace("\\u0026", "&")
-                    
-                    if (rawCode == "NO_CODE_FOUND" || rawCode.isBlank() || rawCode.contains("Error: Browser not ready")) {
-                        agentLogs.add("⚠️ No valid code found. Retrying...")
-                        currentPrompt = "Please provide a valid Python code block for: $userRequest"
-                        continue
-                    }
-                    
-                    agentLogs.add("📜 Code Extracted.")
-                    
-                    if (manualMode) {
-                        agentLogs.add("⏸️ Waiting for manual approval...")
-                        pendingCode = rawCode
-                        showManualReview = true
-                        userApprovalDeferred = CompletableDeferred()
-                        val approved = userApprovalDeferred?.await() ?: false
-                        if (!approved) {
-                            agentLogs.add("❌ User rejected the code. Asking AI for a different approach...")
-                            currentPrompt = "The user rejected your previous code. Please provide a different approach."
-                            continue
-                        }
-                    }
-                    
-                    agentLogs.add("📜 Writing to disk...")
-                    val scriptFile = File(context.filesDir, "ai_script.py")
-                    scriptFile.writeText(rawCode)
-                    
-                    agentLogs.add("▶️ Executing Python script...")
-                    val cmd = "if ! command -v python3 >/dev/null 2>&1; then apk add python3 >/dev/null 2>&1; fi; python3 /host_files/ai_script.py 2>&1"
-                    
-                    val output = executeCommandAndWait(cmd)
-                    
-                    val cleanOutputForAI = output.lines().filter { 
-                        !it.contains("stty -echo") && !it.contains("::CMD_DONE") && 
-                        !it.contains("base64 -d") && !it.contains("apk add python3") && it.isNotBlank() 
-                    }.joinToString("\n")
-                    
-                    var verificationPassed = true
-                    var verificationLog = ""
-                    
-                    val pathRegex = Regex("""(/sdcard/Download/[a-zA-Z0-9_./-]+)""")
-                    val pathsToVerify = pathRegex.findAll(userRequest).map { it.value }.toList()
-                    
-                    if (pathsToVerify.isNotEmpty()) {
-                        agentLogs.add("🔍 Verifying outputs at requested paths...")
-                        for (path in pathsToVerify) {
-                            val lsOutput = executeCommandAndWait("ls -la $path 2>&1")
-                            if (lsOutput.contains("No such file or directory") || lsOutput.contains("not found") || lsOutput.isBlank()) {
-                                verificationPassed = false
-                                verificationLog += "❌ Path not found or empty: $path\n"
-                            } else {
+                        } else {
                                 verificationLog += "✅ Path exists: $path\n$lsOutput\n"
                             }
                         }
@@ -1272,3 +1188,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: 1cab1d4f
 
 // Build Trigger: 9eec21cf
+
+// Build Trigger: 37a0972c

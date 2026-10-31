@@ -19,7 +19,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -53,10 +52,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
@@ -195,27 +190,15 @@ fun TerminalScreen() {
     var showSettings by remember { mutableStateOf(false) }
     
     var showAiDialog by remember { mutableStateOf(false) }
-    var showHistoryDialog by remember { mutableStateOf(false) }
     var aiPrompt by remember { mutableStateOf("") }
     var isAiRunning by remember { mutableStateOf(false) }
     var agentJob by remember { mutableStateOf<Job?>(null) }
     var aiProgress by remember { mutableStateOf(0) }
-    var activeModelName by remember { mutableStateOf("") }
     
     var currentChatId by remember { mutableStateOf(UUID.randomUUID().toString()) }
     var currentHistory by remember { mutableStateOf(JSONArray()) }
     val chatList = remember { mutableStateListOf<ChatSession>() }
     val agentLogs = remember { mutableStateListOf<String>() }
-
-    fun saveAgentLogs() {
-        try {
-            val logDir = File("/sdcard/Download/Local_AI_Models")
-            logDir.mkdirs()
-            val logFile = File(logDir, "chat_history.txt")
-            logFile.writeText(agentLogs.joinToString("\n"))
-        } catch (e: Exception) {}
-    }
-
     
     var longTermMemory by remember { mutableStateOf(prefs.getString("lt_memory", "No successful commands yet.") ?: "") }
     var globalLessons by remember { mutableStateOf("") }
@@ -234,8 +217,13 @@ fun TerminalScreen() {
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
+    val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
+    val chatsDir = remember { File(context.filesDir, "chats").apply { mkdirs() } }
+    val globalMemoryFile = remember { File(context.filesDir, "global_lessons.txt") }
+    
     val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop", "net-tools", "procps")
     val selectedPackages = remember { mutableStateListOf("python3", "git", "nano", "bash", "net-tools", "procps") }
+    
     val manageStorageLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.StartActivityForResult()) {}
     
     fun checkStoragePermission() {
@@ -245,10 +233,6 @@ fun TerminalScreen() {
             manageStorageLauncher.launch(intent)
         }
     }
-    
-val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
-    val chatsDir = remember { File(context.filesDir, "chats").apply { mkdirs() } }
-    val globalMemoryFile = remember { File(context.filesDir, "global_lessons.txt") }
 
     fun getSessionDir(chatId: String): File {
         return File(context.filesDir, "logs/$chatId").apply { mkdirs() }
@@ -261,13 +245,15 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
         } catch (_: Exception) {}
     }
 
-    fun appendCommandLog(cmd: String, status: String) {
+    fun saveAgentLogs() {
         try {
-            val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-            File(getSessionDir(currentChatId), "commands.log").appendText("$ts | $status | $cmd\n")
-        } catch (_: Exception) {}
+            val logDir = File("/sdcard/Download/Local_AI_Models")
+            logDir.mkdirs()
+            val logFile = File(logDir, "chat_history.txt")
+            logFile.writeText(agentLogs.joinToString("\n"))
+        } catch (e: Exception) {}
     }
-
+    
     fun sendToPty(data: String) {
         if (terminalState.ptyFd > 0) ptyProcess.writeData(data)
         focusRequester.requestFocus()
@@ -304,7 +290,6 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
             val tmpDir = File(context.cacheDir, "proot_tmp").absolutePath
             File(tmpDir).mkdirs()
             
-            // ساخت اسکریپت نصب پیش‌نیازها
             val setupScriptFile = File(context.filesDir, "terminal_setup.sh")
             val setupPackages = if (!setupDoneFile.exists() && packagesToInstall.isNotEmpty()) {
                 packagesToInstall.joinToString("\n") { "install_pkg $it" } + "\ntouch /.setup_done"
@@ -371,6 +356,7 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
                                 logFile.appendText(cleanText)
                             } catch (e: Exception) {}
                         }
+
                         withContext(Dispatchers.Main) {
                             val lines = cleanText.split("\n")
                             for (line in lines) {
@@ -386,20 +372,6 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
         }
     }
 
-    
-    LaunchedEffect(Unit) {
-        try {
-            val logFile = File("/sdcard/Download/Local_AI_Models/chat_history.txt")
-            if (logFile.exists()) {
-                val history = logFile.readText()
-                if (history.isNotBlank()) {
-                    agentLogs.add("--- بارگذاری تاریخچه ---")
-                    agentLogs.addAll(history.split("\n").takeLast(20))
-                }
-            }
-        } catch (e: Exception) {}
-    }
-
     LaunchedEffect(Unit) { 
         extractLinux(context, mutableListOf<String>())
         isExtracted = true
@@ -411,7 +383,6 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
         }
     }
 
-    // 👇 Shell Agent Logic (No API Required) 👇
     fun runShellAgent(userRequest: String) {
         isAiRunning = true
         aiProgress = 5
@@ -469,7 +440,6 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
                         !it.contains("base64 -d") && !it.contains("apk add python3") && it.isNotBlank() 
                     }.joinToString("\n")
                     
-                    // 👇 لایه صحت‌سنجی (Verification Layer) 👇
                     var verificationPassed = true
                     var verificationLog = ""
                     
@@ -503,35 +473,17 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
                                             "Reply ONLY with the complete, simplified Python code."
                         } else if (!verificationPassed) {
                             agentLogs.add("❌ Verification Failed: Files were not created! Asking AI to fix...")
-                            currentPrompt = "I ran your code, but the requested files were NOT created.
-" +
-                                            "Terminal output:
-$cleanOutputForAI
-" +
-                                            "Verification result:
-$verificationLog
-" +
+                            currentPrompt = "I ran your code, but the requested files were NOT created.\n" +
+                                            "Terminal output:\n$cleanOutputForAI\n" +
+                                            "Verification result:\n$verificationLog\n" +
                                             "You MUST use os.makedirs(directory, exist_ok=True) to create the folder first, then write the files. " +
                                             "Please fix your code and reply ONLY with the complete corrected Python code."
                         } else {
                             agentLogs.add("❌ Terminal Error detected! Asking AI to fix...")
-                            currentPrompt = "The code failed with this error:
-$cleanOutputForAI
-
-" +
-                                            "Here is the failed code:
-$rawCode
-
-" +
+                            currentPrompt = "The code failed with this error:\n$cleanOutputForAI\n\n" +
+                                            "Here is the failed code:\n$rawCode\n\n" +
                                             "Please fix the error and provide the COMPLETE corrected Python code."
                         }
-                    } else {
-                            agentLogs.add("❌ Verification Failed: Files were not created! Asking AI to fix...")
-                        }
-                        
-                        currentPrompt = "I ran your code. Here is the terminal output:\n$cleanOutputForAI\n\n" +
-                                        "I also verified the requested files. Here is the result:\n$verificationLog\n\n" +
-                                        "The files are missing or there was an error. Please fix your code and provide the COMPLETE corrected Python code. Make sure it actually creates the files."
                     } else {
                         agentLogs.add("✅ Task completed successfully!")
                         aiProgress = 100
@@ -626,7 +578,6 @@ $rawCode
         }
     }
 
-    
     if (showPackageDialog) {
         AlertDialog(
             onDismissRequest = { },
@@ -785,34 +736,6 @@ $rawCode
     }
 }
 
-// 👇 Local AI 👇
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
-@Composable
-fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
-    val context = LocalContext.current
-    var inputText by remember { mutableStateOf("") }
-
-    Column(modifier = Modifier.fillMaxSize().background(Color(0xFF121212)).padding(16.dp)) {
-        Text("Local AI (Offline)", color = Color.Cyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text("Local AI needs a .gguf model in /sdcard/Download/Local_AI_Models", color = Color.Yellow, fontSize = 12.sp)
-        Spacer(modifier = Modifier.height(16.dp))
-        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            items(state.chatHistory) { (role, msg) ->
-                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                    Text(text = "$role: $msg", color = Color.White, modifier = Modifier.padding(12.dp))
-                }
-            }
-        }
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(value = inputText, onValueChange = { inputText = it }, modifier = Modifier.weight(1f), placeholder = { Text("Message local AI...") })
-            Button(onClick = { /* Local Chat Logic */ inputText = "" }, modifier = Modifier.padding(start = 8.dp)) { Text("Send") }
-        }
-    }
-}
-
-// 👇 Helpers 👇
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FileViewerScreen() {
@@ -891,6 +814,31 @@ fun FileViewerScreen() {
                 },
                 confirmButton = { TextButton(onClick = { selectedFileContent = null }) { Text("Close", color = Color.Cyan) } }
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
+@Composable
+fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
+    val context = LocalContext.current
+    var inputText by remember { mutableStateOf("") }
+
+    Column(modifier = Modifier.fillMaxSize().background(Color(0xFF121212)).padding(16.dp)) {
+        Text("Local AI (Offline)", color = Color.Cyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(8.dp))
+        Text("Local AI needs a .gguf model in /sdcard/Download/Local_AI_Models", color = Color.Yellow, fontSize = 12.sp)
+        Spacer(modifier = Modifier.height(16.dp))
+        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            items(state.chatHistory) { (role, msg) ->
+                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    Text(text = "$role: $msg", color = Color.White, modifier = Modifier.padding(12.dp))
+                }
+            }
+        }
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(value = inputText, onValueChange = { inputText = it }, modifier = Modifier.weight(1f), placeholder = { Text("Message local AI...") })
+            Button(onClick = { /* Local Chat Logic */ inputText = "" }, modifier = Modifier.padding(start = 8.dp)) { Text("Send") }
         }
     }
 }
@@ -1000,9 +948,3 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
         entry = tarIn.nextEntry
     }
 }
-
-// Build Trigger Verify: 0d650523
-
-// Build Trigger: ec56f529
-
-// Build Trigger: b45721ec

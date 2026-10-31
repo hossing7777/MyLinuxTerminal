@@ -205,21 +205,34 @@ fun TerminalScreen() {
     }
 
     fun loadAllChats() {
-        if (!chatsDir.exists()) chatsDir.mkdirs()
-        chatList.clear()
-        chatsDir.listFiles { file -> file.isDirectory }?.forEach { dir ->
-            val logFile = File(dir, "chat_history.txt")
-            if (logFile.exists()) {
-                try {
-                    val logs = logFile.readLines()
-                    val name = dir.name
-                    val parts = name.split("_", limit = 3)
-                    val title = if (parts.size == 3) parts[2].replace("_", " ") else name
-                    chatList.add(ChatSession(id = dir.absolutePath, title = title, timestamp = dir.lastModified(), logs = logs))
-                } catch (e: Exception) {}
+        try {
+            if (!chatsDir.exists()) chatsDir.mkdirs()
+            chatList.clear()
+            val dirs = chatsDir.listFiles { file -> file.isDirectory }
+            if (dirs != null) {
+                for (dir in dirs) {
+                    val logFile = File(dir, "chat_history.txt")
+                    if (logFile.exists()) {
+                        val logs = logFile.readLines()
+                        val name = dir.name
+                        // نام پوشه به صورت: تاریخ_ساعت_موضوع است
+                        val parts = name.split("_", limit = 3)
+                        val title = if (parts.size == 3) parts[2].replace("_", " ") else name
+                        chatList.add(
+                            ChatSession(
+                                id = dir.absolutePath,
+                                title = title,
+                                timestamp = dir.lastModified(),
+                                logs = logs
+                            )
+                        )
+                    }
+                }
             }
+            chatList.sortByDescending { it.timestamp }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-        chatList.sortByDescending { it.timestamp }
     }
 
     fun saveCurrentChat() {
@@ -603,26 +616,64 @@ fun TerminalScreen() {
                             }
                         }
                     } else if (agentViewMode == 1) {
+                        // ---------- HISTORY TAB ----------
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text("Chat History:", color = Color.Yellow, fontSize = 14.sp)
-                            Button(onClick = { saveCurrentChat(); agentLogs.clear(); currentChatId = UUID.randomUUID().toString(); agentViewMode = 0 }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006600))) { Text("+ New Chat", fontSize = 12.sp) }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                // دکمه رفرش برای خواندن مجدد پوشه‌ها
+                                IconButton(onClick = { 
+                                    loadAllChats() 
+                                }) {
+                                    Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = Color.Cyan)
+                                }
+                                Button(onClick = { 
+                                    saveCurrentChat()
+                                    agentLogs.clear()
+                                    currentChatId = UUID.randomUUID().toString()
+                                    agentViewMode = 0 
+                                }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006600))) {
+                                    Text("+ New Chat", fontSize = 12.sp)
+                                }
+                            }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
-                        LazyColumn(modifier = Modifier.fillMaxWidth().height(250.dp)) {
-                            items(chatList) { chat ->
-                                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A))) {
-                                    Row(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                        Column(modifier = Modifier.weight(1f).clickable {
-                                            agentLogs.clear(); agentLogs.addAll(chat.logs)
-                                            outputLines.clear(); outputLines.addAll(chat.logs)
-                                            currentChatId = chat.id
-                                            showAiDialog = false
-                                            coroutineScope.launch { listState.animateScrollToItem(maxOf(0, outputLines.size - 1)) }
-                                        }) {
-                                            Text(chat.title, color = Color.Cyan, fontWeight = FontWeight.Bold, maxLines = 1)
-                                            Text(SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(chat.timestamp)), color = Color.Gray, fontSize = 10.sp)
+                        
+                        if (chatList.isEmpty()) {
+                            Text("No saved chats found in Download folder.", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(16.dp))
+                        } else {
+                            LazyColumn(modifier = Modifier.fillMaxWidth().height(250.dp)) {
+                                items(chatList) { chat ->
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                        colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A))
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(
+                                                modifier = Modifier.weight(1f).clickable {
+                                                    // لود کردن لاگ‌ها در حافظه و ترمینال
+                                                    agentLogs.clear()
+                                                    agentLogs.addAll(chat.logs)
+                                                    outputLines.clear()
+                                                    outputLines.addAll(chat.logs)
+                                                    currentChatId = chat.id
+                                                    showAiDialog = false // بستن پنجره برای دیدن ترمینال
+                                                    coroutineScope.launch { listState.animateScrollToItem(maxOf(0, outputLines.size - 1)) }
+                                                }
+                                            ) {
+                                                Text(chat.title, color = Color.Cyan, fontWeight = FontWeight.Bold, maxLines = 1)
+                                                Text(
+                                                    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(chat.timestamp)),
+                                                    color = Color.Gray, fontSize = 10.sp
+                                                )
+                                            }
+                                            IconButton(onClick = { deleteChat(chat.id) }) {
+                                                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red)
+                                            }
                                         }
-                                        IconButton(onClick = { deleteChat(chat.id) }) { Icon(Icons.Default.Delete, "Delete", tint = Color.Red) }
                                     }
                                 }
                             }
@@ -915,3 +966,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: 57467c62
 
 // Build Trigger: b9436513
+
+// Build Trigger: df4aaa43

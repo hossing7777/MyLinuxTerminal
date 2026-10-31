@@ -86,6 +86,7 @@ data class ChatSession(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        HardwareBridge.initTts(this)
         setContent { MainScreen() }
     }
 }
@@ -434,7 +435,24 @@ fun TerminalScreen() {
                 delay(5000)
                 
                 var iteration = 0
-                var currentPrompt = "PAST KNOWLEDGE:\n$pastKnowledge\n\nTASK: $userRequest.\n\nINSTRUCTIONS:\n1. Write a Python script to accomplish the task.\n2. Reply ONLY with the python code inside a markdown block."
+                var currentPrompt = "PAST KNOWLEDGE:
+$pastKnowledge
+
+TASK: $userRequest.
+
+INSTRUCTIONS:
+" +
+                    "You are an Advanced Reasoning Agent (ReAct). You can control Android Hardware and the Terminal.
+" +
+                    "1. FIRST, output your thought process: [THOUGHT] your reasoning here [/THOUGHT]
+" +
+                    "2. SECOND, output a plan: [PLAN] 1. ... 2. ... [/PLAN]
+" +
+                    "3. THIRD, if you need hardware access, output: [HARDWARE] speak Hello World [/HARDWARE], [HARDWARE] wifi_on [/HARDWARE], [HARDWARE] bt_on [/HARDWARE].
+" +
+                    "4. FINALLY, write the Python code to accomplish the terminal task.
+" +
+                    "Reply with the [THOUGHT], [PLAN], [HARDWARE] (optional), and python code block."
                 
                 while (iteration < 7 && isAiRunning) {
                     iteration++
@@ -451,6 +469,28 @@ fun TerminalScreen() {
                     
                     agentLogs.add("📖 Extracting code...")
                     var rawCode = BrowserBridge.extractCode()
+                    
+                    // استخراج تفکر (Thought)
+                    val thoughtRegex = Regex("\\[THOUGHT\\]([\\s\\S]*?)\\[/THOUGHT\\]")
+                    thoughtRegex.find(rawCode)?.let { agentLogs.add("🧠 Thought: " + it.groupValues[1].trim().take(50) + "...") }
+                    
+                    // استخراج و اجرای دستورات سخت‌افزاری
+                    val hwRegex = Regex("\\[HARDWARE\\]([\\s\\S]*?)\\[/HARDWARE\\]")
+                    hwRegex.findAll(rawCode).forEach { match ->
+                        val hwCmd = match.groupValues[1].trim()
+                        agentLogs.add("⚙️ Hardware Command: $hwCmd")
+                        try {
+                            val url = java.net.URL("http://127.0.0.1:8081/hardware?action=" + java.net.URLEncoder.encode(hwCmd.substringBefore(" "), "UTF-8") + "&arg=" + java.net.URLEncoder.encode(hwCmd.substringAfter(" ", ""), "UTF-8"))
+                            url.openStream().use { stream -> stream.bufferedReader().readText() }
+                        } catch (e: Exception) { agentLogs.add("❌ HW Error: ${e.message}") }
+                    }
+                    
+                    // استخراج نقشه راه
+                    val planRegex = Regex("\\[PLAN\\]([\\s\\S]*?)\\[/PLAN\\]")
+                    planRegex.find(rawCode)?.let { currentPlan = it.groupValues[1].trim() }
+                    
+                    // پاکسازی کد از تگ‌ها برای اجرای نهایی
+                    rawCode = rawCode.replace(thoughtRegex, "").replace(hwRegex, "").replace(planRegex, "")
                     
                     // استخراج پلن (To-Do List) از پاسخ هوش مصنوعی
                     val planRegex = Regex("\\[PLAN\\]([\\s\\S]*?)\\[/PLAN\\]")
@@ -994,3 +1034,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: df4aaa43
 
 // Build Trigger: 205a442a
+
+// Build Trigger: 45545e0f

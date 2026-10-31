@@ -34,7 +34,28 @@ object BrowserServer {
             val requestLine = reader.readLine() ?: return
 
             // Parse: GET /browser?action=goto&arg=... HTTP/1.1
-            if (requestLine.startsWith("GET /browser")) {
+            if (requestLine.startsWith("GET /hardware")) {
+                val queryString = requestLine.split(" ")[1].substringAfter("?")
+                val params = parseQuery(queryString)
+                val action = params["action"] ?: ""
+                val arg = params["arg"] ?: ""
+                val context = BrowserBridge.webView?.context
+
+                val result = when (action) {
+                    "speak" -> { HardwareBridge.speak(arg); "Spoke: $arg" }
+                    "wifi_on" -> if (context != null) HardwareBridge.toggleWifi(context, true) else "Context null"
+                    "wifi_off" -> if (context != null) HardwareBridge.toggleWifi(context, false) else "Context null"
+                    "bt_on" -> HardwareBridge.toggleBluetooth(true)
+                    "bt_off" -> HardwareBridge.toggleBluetooth(false)
+                    else -> "Unknown hardware action"
+                }
+
+                val response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\n\r\n$result"
+                val writer = PrintWriter(socket.getOutputStream(), true)
+                writer.print(response)
+                writer.flush()
+                return
+            } else if (requestLine.startsWith("GET /browser")) {
                 val queryString = requestLine.split(" ")[1].substringAfter("?")
                 val params = parseQuery(queryString)
                 

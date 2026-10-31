@@ -758,7 +758,7 @@ fun FileViewerScreen() {
     var files by remember { mutableStateOf(listOf<File>()) }
     var selectedFileContent by remember { mutableStateOf<String?>(null) }
     var selectedFileName by remember { mutableStateOf("") }
-    var currentPath by remember { mutableStateOf("/sdcard/Download/Agent_Project") }
+    var currentPath by remember { mutableStateOf("/sdcard/Download") }
 
     LaunchedEffect(currentPath) {
         val dir = File(currentPath)
@@ -771,8 +771,20 @@ fun FileViewerScreen() {
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Color(0xFF121212)).padding(16.dp)) {
-        Text("File Viewer", color = Color.Cyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Text("Path: $currentPath", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(bottom = 8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+            IconButton(onClick = { 
+                val parent = File(currentPath).parentFile
+                if (parent != null && parent.exists()) {
+                    currentPath = parent.absolutePath 
+                }
+            }) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.Cyan)
+            }
+            Column {
+                Text("File Viewer", color = Color.Cyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text("Path: $currentPath", color = Color.Gray, fontSize = 12.sp)
+            }
+        }
         
         LazyColumn(modifier = Modifier.weight(1f)) {
             items(files) { file ->

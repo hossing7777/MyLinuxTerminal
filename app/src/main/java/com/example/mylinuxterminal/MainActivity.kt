@@ -216,6 +216,26 @@ fun TerminalScreen() {
     var isTesting by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf("") }
     
+        val dbHelper = remember { MemoryDbHelper(context) }
+    var showMemoryTab by remember { mutableStateOf(false) }
+    var showPlanTab by remember { mutableStateOf(false) }
+    var currentPlan by remember { mutableStateOf("") }
+    
+    // File Picker برای ارسال فایل به هوش مصنوعی
+    val filePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        uri?.let {
+            try {
+                val content = context.contentResolver.openInputStream(it)?.bufferedReader()?.use { r -> r.readText() }
+                if (content != null) {
+                    aiPrompt += "\n\n[Attached File Content]:\n$content"
+                }
+            } catch (e: Exception) {}
+        }
+    }
+    
+    // زمان‌بندی ساده (Scheduler)
+    var scheduledTime by remember { mutableStateOf("") }
+
     val ptyProcess = remember { PtyProcess() }
     val outputLines = remember { mutableStateListOf<String>() }
     val listState = rememberLazyListState()
@@ -394,8 +414,14 @@ fun TerminalScreen() {
         isAiRunning = true
         aiProgress = 5
         agentLogs.clear()
-        agentLogs.add("🚀 Autonomous Shell Agent Started...")
+        agentLogs.add("🚀 Autonomous Shell Agent Started (Enterprise Mode)...")
         agentLogs.add("📝 Request: $userRequest")
+        
+        // خواندن حافظه بلندمدت
+        val pastKnowledge = dbHelper.getMemoryContext()
+        if (pastKnowledge.isNotBlank()) {
+            agentLogs.add("🧠 Loaded Long-Term Memory.")
+        }
         
         coroutineScope.launch {
             try {
@@ -410,7 +436,7 @@ fun TerminalScreen() {
                 delay(5000)
                 
                 var iteration = 0
-                var currentPrompt = "$userRequest. Reply ONLY with the python code inside a markdown block."
+                var currentPrompt = "PAST KNOWLEDGE (Use this to avoid past mistakes):\n$pastKnowledge\n\nTASK: $userRequest.\n\nINSTRUCTIONS:\n1. Write a Python script to accomplish the task.\n2. If possible, write a separate test script to verify the output.\n3. Reply ONLY with the python code inside a markdown block."
                 
                 while (iteration < 7 && isAiRunning) {
                     iteration++
@@ -511,6 +537,7 @@ fun TerminalScreen() {
                         }
                     } else {
                         agentLogs.add("✅ Task completed successfully!")
+                        dbHelper.addMemory("SUCCESS", "Task: $userRequest")
                         aiProgress = 100
                         isAiRunning = false
                         saveAgentLogs()
@@ -520,6 +547,7 @@ fun TerminalScreen() {
                 
                 if (isAiRunning) {
                     agentLogs.add("🛑 Max attempts reached. Stopping.")
+                    dbHelper.addMemory("FAILED", "Task: $userRequest (Max attempts reached)")
                     isAiRunning = false
                     saveAgentLogs()
                 }
@@ -671,13 +699,32 @@ fun TerminalScreen() {
             shape = RoundedCornerShape(16.dp),
             title = { 
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("AI Agent", color = Color.Cyan, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (showMemoryTab) "🧠 Memory" else if (showPlanTab) "📋 Plan" else "AI Agent", color = Color.Cyan, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        IconButton(onClick = { showMemoryTab = !showMemoryTab; showPlanTab = false }) { 
+                            Icon(Icons.Default.List, "Memory", tint = if(showMemoryTab) Color.Yellow else Color.Gray) 
+                        }
+                        IconButton(onClick = { showPlanTab = !showPlanTab; showMemoryTab = false }) { 
+                            Icon(Icons.Default.DateRange, "Plan", tint = if(showPlanTab) Color.Yellow else Color.Gray) 
+                        }
+                    }
                     IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
                 }
             },
             text = {
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    if (!isAiRunning) {
+                    if (showMemoryTab) {
+                        Text("Long-Term Memory:", color = Color.Yellow, fontSize = 12.sp)
+                        Box(modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black).padding(8.dp).verticalScroll(rememberScrollState())) {
+                            Text(dbHelper.getMemoryContext(), color = Color.LightGray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                        }
+                    } else if (showPlanTab) {
+                        Text("Current Plan:", color = Color.Yellow, fontSize = 12.sp)
+                        Box(modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black).padding(8.dp).verticalScroll(rememberScrollState())) {
+                            Text(if (currentPlan.isBlank()) "No active plan." else currentPlan, color = Color.Green, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                        }
+                    } else if (!isAiRunning) {
                         OutlinedTextField(
                             value = aiPrompt,
                             onValueChange = { aiPrompt = it },
@@ -686,11 +733,16 @@ fun TerminalScreen() {
                             colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
                         )
                         Spacer(modifier = Modifier.height(16.dp))
-                        Button(
-                            onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))
-                        ) { Text("شروع", fontSize = 16.sp) }
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { filePickerLauncher.launch("*/*") }) { 
+                                Icon(Icons.Default.AttachFile, "Attach File", tint = Color.Cyan) 
+                            }
+                            Button(
+                                onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))
+                            ) { Text("شروع", fontSize = 16.sp) }
+                        }
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.Cyan, strokeWidth = 3.dp)
@@ -1061,3 +1113,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: 180316a6
 
 // Build Trigger: 5f8e44f2
+
+// Build Trigger: af262c53

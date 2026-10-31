@@ -623,6 +623,167 @@ fun TerminalScreen() {
                     do_browser "goto" "https://duck.ai"
                     sleep 5
                     echo "⌨️ Typing prompt..."
+                    do_browser "type" "${'$'}PROMPT. Reply ONLY with the code inside a markdown python block."
+                    sleep 2
+                    echo "📤 Sending message..."
+                    do_browser "send" " "
+                    echo "⏳ Waiting 20s for AI..."
+                    sleep 20
+                    echo "📖 Extracting code..."
+                    do_browser "extract_code" > /root/ai_raw_code.py
+                    
+                    # پاکسازی بک‌تیک‌ها و کاراکترهای اضافی
+                    sed -i '/```/d' /root/ai_raw_code.py
+                    sed -i '1s/^python//' /root/ai_raw_code.py
+                    sed -i '/^$/d' /root/ai_raw_code.py
+                    
+                    if grep -q "NO_CODE_FOUND" /root/ai_raw_code.py; then
+                        echo "❌ Error: AI did not return a valid code block."
+                        exit 1
+                    fi
+                    
+                    echo "▶️ Executing code..."
+                    python3 /root/ai_raw_code.py 2>&1
+                """.trimIndent()
+            setupScriptFile.writeText(setupContent)
+            setupScriptFile.setExecutable(true)
+
+            // اجرای اسکریپت از طریق پوشه share شده در PRoot
+            val scriptFile = File(context.filesDir, "start.sh")
+            scriptFile.writeText("""
+                $prootPath --kill-on-exit --link2symlink --sysvipc -0 -r $alpinePath -w / -b /dev -b /proc -b /sys -b /storage/emulated/0:/sdcard -b ${context.filesDir.absolutePath}:/host_files /bin/sh -c "sh /host_files/terminal_setup.sh; exec /bin/sh"
+            """.trimIndent())
+            scriptFile.setExecutable(true)
+
+            withContext(Dispatchers.Main) { outputLines.clear() }
+
+            withContext(Dispatchers.Main) { outputLines.add("🔧 Starting PTY...") }
+
+            terminalState.ptyFd = ptyProcess.createPty(
+                scriptFile.absolutePath, prootPath, alpinePath, tmpDir, loaderPath, nativeLibDir, context.filesDir.absolutePath
+            )
+
+            withContext(Dispatchers.Main) {
+                outputLines.add("PTY fd = ${terminalState.ptyFd}")
+                if (terminalState.ptyFd <= 0) {
+                    outputLines.add("❌ PTY failed. Check:")
+                    outputLines.add("  • proot binary: $prootPath")
+                    outputLines.add("  • loader: $loaderPath")
+                    outputLines.add("  • alpine dir: $alpinePath")
+                    outputLines.add("  • start.sh: ${scriptFile.absolutePath}")
+                    return@withContext
+                }
+            }
+
+            if (terminalState.ptyFd > 0) {
+                val buf = ByteArray(4096)
+                while (true) {
+                    val len = ptyProcess.readData(buf)
+                    if (len > 0) {
+                        val text = String(buf, 0, len)
+                        val cleanText = cleanAnsi(text)
+
+                        if (terminalState.isWaitingForCommand) {
+                            terminalState.commandOutputBuffer.append(cleanText)
+                            if (terminalState.commandOutputBuffer.contains(terminalState.currentMarker)) {
+                                val finalOutput = terminalState.commandOutputBuffer.toString().substringBefore(terminalState.currentMarker).trim()
+                                terminalState.commandDeferred?.complete(finalOutput)
+                                terminalState.isWaitingForCommand = false
+                            }
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            if (cleanText.contains("::SETUP_DONE::")) isInstalling = false
+                            val lines = cleanText.split("\n")
+                            for (line in lines) {
+                                if (line.isNotBlank() && !line.contains("::CMD_DONE_") && !line.contains("::SETUP_DONE::")) {
+                                    outputLines.add(line)
+                                }
+                            }
+                            listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
+                        }
+                    } else break
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        extractLinux(context, mutableListOf<String>())
+        isExtracted = true
+        if (setupDoneFile.exists() || prefs.getBoolean("skip_setup", false)) startTerminal(emptyList()) else showPackageDialog = true
+        checkStoragePermission()
+    }
+
+    fun stopAgent() {
+        agentJob?.cancel()
+        sendToPty("\u0003")
+        isAiRunning = false
+        agentLogs.add("🛑 عملیات متوقف شد.")
+    }
+
+    fun startNewChat() {
+        saveCurrentChat() 
+        currentChatId = UUID.randomUUID().toString()
+        currentHistory = JSONArray()
+        agentLogs.clear()
+        aiPrompt = ""
+        showHistoryDialog = false
+        showAiDialog = true
+    }
+
+    fun loadChat(session: ChatSession) {
+        saveCurrentChat() 
+        currentChatId = session.id
+        currentHistory = session.history
+        agentLogs.clear()
+        agentLogs.add("📂 چت بارگذاری شد: ${session.title}")
+        for (i in 0 until session.history.length()) {
+            val msg = session.history.getJSONObject(i)
+            val role = if (msg.getString("role") == "user") "👤 شما" else "🤖 AI"
+            agentLogs.add("$role: ${msg.getString("content")}")
+        }
+        showHistoryDialog = false
+        showAiDialog = true
+    }
+
+    fun getSessionDir(chatId: String): File {
+        return File(context.filesDir, "logs/$chatId").apply { mkdirs() }
+    }
+
+    fun appendAgentLog(line: String) {
+        try {
+            val ts = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+            File(getSessionDir(currentChatId), "agent.log").appendText("[$ts] $line\n")
+        } catch (_: Exception) {}
+    }
+
+    fun appendCommandLog(cmd: String, status: String) {
+        try {
+            val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+            File(getSessionDir(currentChatId), "commands.log").appendText("$ts | $status | $cmd\n")
+        } catch (_: Exception) {}
+    }
+
+    fun runAgent(userRequest: String) {
+        if (selectedModelId == "shell_agent") {
+            isAiRunning = true
+            aiProgress = 10
+            agentLogs.add("🚀 Shell Agent started (No API required).")
+            agentLogs.add("📝 Request: $userRequest")
+            appendAgentLog("START: $userRequest")
+
+            coroutineScope.launch {
+                val scriptFile = File(context.filesDir, "free_agent.sh")
+                val scriptContent = """
+                    #!/bin/sh
+                    PROMPT="${'$'}1"
+                    do_browser() { curl -m 20 -s -G "http://127.0.0.1:8081/browser" --data-urlencode "action=${'$'}1" --data-urlencode "arg=${'$'}2"; }
+                    if ! command -v curl >/dev/null 2>&1; then apk add curl >/dev/null 2>&1; fi
+                    echo "🌐 Loading Duck.ai..."
+                    do_browser "goto" "https://duck.ai"
+                    sleep 5
+                    echo "⌨️ Typing prompt..."
                     do_browser "type" "${'$'}PROMPT. Reply ONLY with the python code."
                     sleep 2
                     do_browser "send" " "

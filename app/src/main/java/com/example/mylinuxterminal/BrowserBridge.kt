@@ -71,9 +71,19 @@ object BrowserBridge {
         "(function(){" +
         "let blocks = document.querySelectorAll('pre code');" +
         "if(blocks.length === 0) blocks = document.querySelectorAll('pre');" +
-        "if(blocks.length === 0) return 'NO_CODE_FOUND';" +
-        "let text = blocks[blocks.length - 1].innerText;" +
-        "return text;" +
+        "if(blocks.length > 0) return blocks[blocks.length - 1].innerText;" +
+        "// Fallback: Searching for lines starting with import or print" +
+        "let text = document.body.innerText;" +
+        "let lines = text.split('\\n');" +
+        "let codeLines = [];" +
+        "for(let i=0; i<lines.length; i++) {" +
+        "  let line = lines[i].trim();" +
+        "  if(line.startsWith('print(') || line.startsWith('import ') || line.startsWith('def ') || line.startsWith('for ')) {" +
+        "    codeLines.push(lines[i]);" +
+        "  }" +
+        "}" +
+        "if(codeLines.length > 0) return codeLines.join('\\n');" +
+        "return 'NO_CODE_FOUND';" +
         "})()"
     )
 }

@@ -374,7 +374,13 @@ fun TerminalScreen() {
                               "echo '$b64Code' | base64 -d > /root/ai_script.py && python3 /root/ai_script.py 2>&1"
                     
                     val output = executeCommandAndWait(cmd)
-                    agentLogs.add("📄 Output: ${output.take(200)}...")
+                    val cleanOutput = output.lines().filter { 
+                        !it.contains("stty -echo") && 
+                        !it.contains("::CMD_DONE") && 
+                        !it.contains("base64 -d") &&
+                        it.isNotBlank() 
+                    }.joinToString("\n")
+                    agentLogs.add("📄 Output:\n$cleanOutput")
                     
                     if (output.contains("Traceback") || output.contains("SyntaxError") || output.contains("NameError") || output.contains("not found")) {
                         agentLogs.add("❌ Error detected! Asking AI to fix the code...")

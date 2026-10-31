@@ -758,12 +758,36 @@ fun TerminalScreen() {
                     }
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    if (agentViewMode == 3) {
-                        Text("Long-Term Memory:", color = Color.Yellow, fontSize = 12.sp)
-                        Box(modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black).padding(8.dp).verticalScroll(rememberScrollState())) {
-                            Text(dbHelper.getMemoryContext(), color = Color.LightGray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                    if (agentViewMode == 0) {
+                        // ---------- CHAT TAB ----------
+                        if (!isAiRunning) {
+                            OutlinedTextField(
+                                value = aiPrompt,
+                                onValueChange = { aiPrompt = it },
+                                placeholder = { Text("درخواست خود را بنویسید...", color = Color.Gray) },
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
+                                colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = { filePickerLauncher.launch("*/*") }) { 
+                                    Icon(Icons.Default.Add, "Attach File", tint = Color.Cyan) 
+                                }
+                                Button(
+                                    onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) },
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))
+                                ) { Text("شروع", fontSize = 16.sp) }
+                            }
+                        } else {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.Cyan, strokeWidth = 3.dp)
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text("در حال اجرا... ($aiProgress%)", color = Color.Yellow)
+                            }
                         }
                     } else if (agentViewMode == 1) {
+                        // ---------- HISTORY TAB ----------
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text("Chat History:", color = Color.Yellow, fontSize = 14.sp)
                             Button(onClick = { 
@@ -798,39 +822,22 @@ fun TerminalScreen() {
                             }
                         }
                     } else if (agentViewMode == 2) {
+                        // ---------- PLAN TAB ----------
                         Text("Current Plan:", color = Color.Yellow, fontSize = 12.sp)
                         Box(modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black).padding(8.dp).verticalScroll(rememberScrollState())) {
                             Text(if (currentPlan.isBlank()) "No active plan." else currentPlan, color = Color.Green, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
                         }
-                    } else if (!isAiRunning) {
-                        OutlinedTextField(
-                            value = aiPrompt,
-                            onValueChange = { aiPrompt = it },
-                            placeholder = { Text("درخواست خود را بنویسید...", color = Color.Gray) },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
-                            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { filePickerLauncher.launch("*/*") }) { 
-                                Icon(Icons.Default.Add, "Attach File", tint = Color.Cyan) 
-                            }
-                            Button(
-                                onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) },
-                                modifier = Modifier.weight(1f),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))
-                            ) { Text("شروع", fontSize = 16.sp) }
-                        }
-                    } else {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.Cyan, strokeWidth = 3.dp)
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text("در حال اجرا... ($aiProgress%)", color = Color.Yellow)
+                    } else if (agentViewMode == 3) {
+                        // ---------- MEMORY TAB ----------
+                        Text("Long-Term Memory:", color = Color.Yellow, fontSize = 12.sp)
+                        Box(modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black).padding(8.dp).verticalScroll(rememberScrollState())) {
+                            Text(dbHelper.getMemoryContext(), color = Color.LightGray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
                         }
                     }
+
                     Spacer(modifier = Modifier.height(16.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("گزارش زنده:", color = Color.LightGray, fontSize = 12.sp)
+                        , color = Color.LightGray, fontSize = 12.sp)
                         TextButton(onClick = { agentLogs.clear() }) { Text("پاک کردن", color = Color.Red, fontSize = 12.sp) }
                     }
                     LazyColumn(modifier = Modifier.height(200.dp).fillMaxWidth().background(Color.Black, RoundedCornerShape(8.dp)).padding(8.dp)) {
@@ -1199,3 +1206,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: 60c14902
 
 // Build Trigger: 2ab06967
+
+// Build Trigger: c1deaf5f

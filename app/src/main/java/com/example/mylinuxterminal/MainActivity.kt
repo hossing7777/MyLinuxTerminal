@@ -613,100 +613,23 @@ fun TerminalScreen() {
             appendAgentLog("START: $userRequest")
 
             coroutineScope.launch {
+                val b64Script = "IyEvYmluL3NoClBST01QVD0iJDEiCmRvX2Jyb3dzZXIoKSB7IGN1cmwgLW0gMjAgLXMgLUcgImh0dHA6Ly8xMjcuMC4wLjE6ODA4MS9icm93c2VyIiAtLWRhdGEtdXJsZW5jb2RlICJhY3Rpb249JDEiIC0tZGF0YS11cmxlbmNvZGUgImFyZz0kMiI7IH0KaWYgISBjb21tYW5kIC12IGN1cmwgPi9kZXYvbnVsbCAyPiYxOyB0aGVuIGFwayBhZGQgY3VybCA+L2Rldi9udWxsIDI+JjE7IGZpCmVjaG8gIvCfjJAgTG9hZGluZyBEdWNrLmFpLi4uIgpkb19icm93c2VyICJnb3RvIiAiaHR0cHM6Ly9kdWNrLmFpIgpzbGVlcCA1CmVjaG8gIuKMqO+4jyBUeXBpbmcgcHJvbXB0Li4uIgpkb19icm93c2VyICJ0eXBlIiAiJFBST01QVC4gUmVwbHkgT05MWSB3aXRoIHRoZSBjb2RlIGluc2lkZSBhIG1hcmtkb3duIHB5dGhvbiBibG9jay4iCnNsZWVwIDIKZWNobyAi8J+TpCBTZW5kaW5nIG1lc3NhZ2UuLi4iCmRvX2Jyb3dzZXIgInNlbmQiICIgIgplY2hvICLij7MgV2FpdGluZyAyMHMgZm9yIEFJLi4uIgpzbGVlcCAyMAplY2hvICLwn5OWIEV4dHJhY3RpbmcgY29kZS4uLiIKZG9fYnJvd3NlciAiZXh0cmFjdF9jb2RlIiA+IC9yb290L2FpX3Jhd19jb2RlLnB5CnNlZCAtaSAnL2BgYC9kJyAvcm9vdC9haV9yYXdfY29kZS5weQpzZWQgLWkgJzFzL15weXRob24vLycgL3Jvb3QvYWlfcmF3X2NvZGUucHkKc2VkIC1pICcvXiQvZCcgL3Jvb3QvYWlfcmF3X2NvZGUucHkKaWYgZ3JlcCAtcSAiTk9fQ09ERV9GT1VORCIgL3Jvb3QvYWlfcmF3X2NvZGUucHk7IHRoZW4KICAgIGVjaG8gIuKdjCBFcnJvcjogQUkgZGlkIG5vdCByZXR1cm4gYSB2YWxpZCBjb2RlIGJsb2NrLiIKICAgIGV4aXQgMQpmaQplY2hvICLilrbvuI8gRXhlY3V0aW5nIGNvZGUuLi4iCnB5dGhvbjMgL3Jvb3QvYWlfcmF3X2NvZGUucHkgMj4mMQo="
+                val decodedScript = String(android.util.Base64.decode(b64Script, android.util.Base64.DEFAULT))
                 val scriptFile = File(context.filesDir, "free_agent.sh")
-                val scriptContent = """
-                    #!/bin/sh
-                    PROMPT="${'$'}1"
-                    do_browser() { curl -m 20 -s -G "http://127.0.0.1:8081/browser" --data-urlencode "action=${'$'}1" --data-urlencode "arg=${'$'}2"; }
-                    if ! command -v curl >/dev/null 2>&1; then apk add curl >/dev/null 2>&1; fi
-                    echo "🌐 Loading Duck.ai..."
-                    do_browser "goto" "https://duck.ai"
-                    sleep 5
-                    echo "⌨️ Typing prompt..."
-                    do_browser "type" "${'$'}PROMPT. Reply ONLY with the code inside a markdown python block."
-                    sleep 2
-                    echo "📤 Sending message..."
-                    do_browser "send" " "
-                    echo "⏳ Waiting 20s for AI..."
-                    sleep 20
-                    echo "📖 Extracting code..."
-                    do_browser "extract_code" > /root/ai_raw_code.py
-                    
-                    # پاکسازی بک‌تیک‌ها و کاراکترهای اضافی
-                    sed -i '/```/d' /root/ai_raw_code.py
-                    sed -i '1s/^python//' /root/ai_raw_code.py
-                    sed -i '/^$/d' /root/ai_raw_code.py
-                    
-                    if grep -q "NO_CODE_FOUND" /root/ai_raw_code.py; then
-                        echo "❌ Error: AI did not return a valid code block."
-                        exit 1
-                    fi
-                    
-                    echo "▶️ Executing code..."
-                    python3 /root/ai_raw_code.py 2>&1
-                """.trimIndent()
-            setupScriptFile.writeText(setupContent)
-            setupScriptFile.setExecutable(true)
-
-            // اجرای اسکریپت از طریق پوشه share شده در PRoot
-            val scriptFile = File(context.filesDir, "start.sh")
-            scriptFile.writeText("""
-                $prootPath --kill-on-exit --link2symlink --sysvipc -0 -r $alpinePath -w / -b /dev -b /proc -b /sys -b /storage/emulated/0:/sdcard -b ${context.filesDir.absolutePath}:/host_files /bin/sh -c "sh /host_files/terminal_setup.sh; exec /bin/sh"
-            """.trimIndent())
-            scriptFile.setExecutable(true)
-
-            withContext(Dispatchers.Main) { outputLines.clear() }
-
-            withContext(Dispatchers.Main) { outputLines.add("🔧 Starting PTY...") }
-
-            terminalState.ptyFd = ptyProcess.createPty(
-                scriptFile.absolutePath, prootPath, alpinePath, tmpDir, loaderPath, nativeLibDir, context.filesDir.absolutePath
-            )
-
-            withContext(Dispatchers.Main) {
-                outputLines.add("PTY fd = ${terminalState.ptyFd}")
-                if (terminalState.ptyFd <= 0) {
-                    outputLines.add("❌ PTY failed. Check:")
-                    outputLines.add("  • proot binary: $prootPath")
-                    outputLines.add("  • loader: $loaderPath")
-                    outputLines.add("  • alpine dir: $alpinePath")
-                    outputLines.add("  • start.sh: ${scriptFile.absolutePath}")
-                    return@withContext
+                scriptFile.writeText(decodedScript)
+                scriptFile.setExecutable(true)
+                
+                val output = executeCommandAndWait("sh /host_files/free_agent.sh \"$userRequest\"")
+                
+                withContext(Dispatchers.Main) {
+                    agentLogs.add("📄 Final Output:\n$output")
+                    appendAgentLog("DONE: $output")
+                    isAiRunning = false
+                    aiProgress = 100
                 }
             }
-
-            if (terminalState.ptyFd > 0) {
-                val buf = ByteArray(4096)
-                while (true) {
-                    val len = ptyProcess.readData(buf)
-                    if (len > 0) {
-                        val text = String(buf, 0, len)
-                        val cleanText = cleanAnsi(text)
-
-                        if (terminalState.isWaitingForCommand) {
-                            terminalState.commandOutputBuffer.append(cleanText)
-                            if (terminalState.commandOutputBuffer.contains(terminalState.currentMarker)) {
-                                val finalOutput = terminalState.commandOutputBuffer.toString().substringBefore(terminalState.currentMarker).trim()
-                                terminalState.commandDeferred?.complete(finalOutput)
-                                terminalState.isWaitingForCommand = false
-                            }
-                        }
-
-                        withContext(Dispatchers.Main) {
-                            if (cleanText.contains("::SETUP_DONE::")) isInstalling = false
-                            val lines = cleanText.split("\n")
-                            for (line in lines) {
-                                if (line.isNotBlank() && !line.contains("::CMD_DONE_") && !line.contains("::SETUP_DONE::")) {
-                                    outputLines.add(line)
-                                }
-                            }
-                            listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
-                        }
-                    } else break
-                }
-            }
+            return
         }
-    }
 
     LaunchedEffect(Unit) {
         extractLinux(context, mutableListOf<String>())

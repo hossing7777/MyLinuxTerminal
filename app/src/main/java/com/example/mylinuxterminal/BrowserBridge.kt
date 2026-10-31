@@ -72,7 +72,6 @@ object BrowserBridge {
         "let blocks = document.querySelectorAll('pre code');" +
         "if(blocks.length === 0) blocks = document.querySelectorAll('pre');" +
         "if(blocks.length > 0) return blocks[blocks.length - 1].innerText;" +
-        "// Fallback: Searching for lines starting with import or print" +
         "let text = document.body.innerText;" +
         "let lines = text.split('\\n');" +
         "let codeLines = [];" +

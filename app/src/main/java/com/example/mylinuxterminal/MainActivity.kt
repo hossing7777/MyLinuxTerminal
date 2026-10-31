@@ -235,6 +235,43 @@ fun TerminalScreen() {
     // زمان‌بندی ساده (Scheduler)
     var scheduledTime by remember { mutableStateOf("") }
 
+        var currentChatId by remember { mutableStateOf(UUID.randomUUID().toString()) }
+    val chatList = remember { mutableStateListOf<ChatSession>() }
+    val chatsDir = remember { File(context.filesDir, "chats").apply { mkdirs() } }
+
+    fun loadAllChats() {
+        chatList.clear()
+        chatsDir.listFiles { file -> file.extension == "json" }?.forEach { file ->
+            try {
+                val json = JSONObject(file.readText())
+                chatList.add(
+                    ChatSession(
+                        id = json.getString("id"),
+                        title = json.getString("title"),
+                        timestamp = json.getLong("timestamp"),
+                        logs = List(json.getJSONArray("logs").length()) { i -> json.getJSONArray("logs").getString(i) }
+                    )
+                )
+            } catch (e: Exception) {}
+        }
+        chatList.sortByDescending { it.timestamp }
+    }
+
+    fun saveCurrentChat() {
+        if (agentLogs.isEmpty()) return
+        try {
+            val title = agentLogs.firstOrNull { it.contains("Request:") }?.replace("📝 Request: ", "")?.take(30) ?: "New Chat"
+            val json = JSONObject().apply {
+                put("id", currentChatId)
+                put("title", title)
+                put("timestamp", System.currentTimeMillis())
+                put("logs", JSONArray(agentLogs))
+            }
+            File(chatsDir, "$currentChatId.json").writeText(json.toString())
+            loadAllChats()
+        } catch (e: Exception) {}
+    }
+
     val ptyProcess = remember { PtyProcess() }
     val outputLines = remember { mutableStateListOf<String>() }
     val listState = rememberLazyListState()
@@ -399,6 +436,7 @@ fun TerminalScreen() {
     }
 
     LaunchedEffect(Unit) { 
+        loadAllChats()
         extractLinux(context, mutableListOf<String>())
         isExtracted = true
         checkStoragePermission()
@@ -537,6 +575,7 @@ fun TerminalScreen() {
                     } else {
                         agentLogs.add("✅ Task completed successfully!")
                         dbHelper.addMemory("SUCCESS", "Task: $userRequest")
+                        saveCurrentChat()
                         aiProgress = 100
                         isAiRunning = false
                         saveAgentLogs()
@@ -547,6 +586,7 @@ fun TerminalScreen() {
                 if (isAiRunning) {
                     agentLogs.add("🛑 Max attempts reached. Stopping.")
                     dbHelper.addMemory("FAILED", "Task: $userRequest (Max attempts reached)")
+                    saveCurrentChat()
                     isAiRunning = false
                     saveAgentLogs()
                 }
@@ -712,17 +752,52 @@ fun TerminalScreen() {
                         contentColor = Color.Cyan
                     ) {
                         Tab(selected = agentViewMode == 0, onClick = { agentViewMode = 0 }, text = { Text("Chat") })
-                        Tab(selected = agentViewMode == 1, onClick = { agentViewMode = 1 }, text = { Text("Plan") })
-                        Tab(selected = agentViewMode == 2, onClick = { agentViewMode = 2 }, text = { Text("Memory") })
+                        Tab(selected = agentViewMode == 1, onClick = { agentViewMode = 1 }, text = { Text("History") })
+                        Tab(selected = agentViewMode == 2, onClick = { agentViewMode = 2 }, text = { Text("Plan") })
+                        Tab(selected = agentViewMode == 3, onClick = { agentViewMode = 3 }, text = { Text("Memory") })
                     }
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    if (agentViewMode == 2) {
+                    if (agentViewMode == 3) {
                         Text("Long-Term Memory:", color = Color.Yellow, fontSize = 12.sp)
                         Box(modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black).padding(8.dp).verticalScroll(rememberScrollState())) {
                             Text(dbHelper.getMemoryContext(), color = Color.LightGray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
                         }
                     } else if (agentViewMode == 1) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("Chat History:", color = Color.Yellow, fontSize = 14.sp)
+                            Button(onClick = { 
+                                saveCurrentChat()
+                                agentLogs.clear()
+                                currentChatId = UUID.randomUUID().toString()
+                                agentViewMode = 0 
+                            }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006600))) {
+                                Text("+ New Chat", fontSize = 12.sp)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        LazyColumn(modifier = Modifier.fillMaxWidth().height(250.dp)) {
+                            items(chatList) { chat ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable {
+                                        agentLogs.clear()
+                                        agentLogs.addAll(chat.logs)
+                                        currentChatId = chat.id
+                                        agentViewMode = 0
+                                    },
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A))
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text(chat.title, color = Color.Cyan, fontWeight = FontWeight.Bold, maxLines = 1)
+                                        Text(
+                                            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(chat.timestamp)),
+                                            color = Color.Gray, fontSize = 10.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else if (agentViewMode == 2) {
                         Text("Current Plan:", color = Color.Yellow, fontSize = 12.sp)
                         Box(modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black).padding(8.dp).verticalScroll(rememberScrollState())) {
                             Text(if (currentPlan.isBlank()) "No active plan." else currentPlan, color = Color.Green, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
@@ -1122,3 +1197,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: d7678f25
 
 // Build Trigger: 60c14902
+
+// Build Trigger: 2ab06967

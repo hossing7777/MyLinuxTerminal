@@ -200,10 +200,7 @@ fun TerminalScreen() {
     var isAiRunning by remember { mutableStateOf(false) }
     var agentJob by remember { mutableStateOf<Job?>(null) }
     var aiProgress by remember { mutableStateOf(0) }
-    
-    var currentChatId by remember { mutableStateOf(UUID.randomUUID().toString()) }
     var currentHistory by remember { mutableStateOf(JSONArray()) }
-    val chatList = remember { mutableStateListOf<ChatSession>() }
     val agentLogs = remember { mutableStateListOf<String>() }
     
     var longTermMemory by remember { mutableStateOf(prefs.getString("lt_memory", "No successful commands yet.") ?: "") }
@@ -234,10 +231,6 @@ fun TerminalScreen() {
     
     // زمان‌بندی ساده (Scheduler)
     var scheduledTime by remember { mutableStateOf("") }
-
-        var currentChatId by remember { mutableStateOf(UUID.randomUUID().toString()) }
-    val chatList = remember { mutableStateListOf<ChatSession>() }
-    val chatsDir = remember { File(context.filesDir, "chats").apply { mkdirs() } }
 
     fun loadAllChats() {
         chatList.clear()
@@ -272,7 +265,11 @@ fun TerminalScreen() {
         } catch (e: Exception) {}
     }
 
-    val ptyProcess = remember { PtyProcess() }
+        val ptyProcess = remember { PtyProcess() }
+    var currentChatId by remember { mutableStateOf(UUID.randomUUID().toString()) }
+    val chatList = remember { mutableStateListOf<ChatSession>() }
+    val chatsDir = remember { File(context.filesDir, "chats").apply { mkdirs() } }
+
     val outputLines = remember { mutableStateListOf<String>() }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -280,7 +277,6 @@ fun TerminalScreen() {
     val keyboardController = LocalSoftwareKeyboardController.current
 
     val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
-    val chatsDir = remember { File(context.filesDir, "chats").apply { mkdirs() } }
     val globalMemoryFile = remember { File(context.filesDir, "global_lessons.txt") }
     
     val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop", "net-tools", "procps")
@@ -1189,3 +1185,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: ade54022
 
 // Build Trigger: b0c08a2d
+
+// Build Trigger: 1363fb94

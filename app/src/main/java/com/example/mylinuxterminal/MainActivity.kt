@@ -202,6 +202,7 @@ fun TerminalScreen() {
     }
 
     fun loadAllChats() {
+        if (!chatsDir.exists()) chatsDir.mkdirs()
         chatList.clear()
         chatsDir.listFiles { file -> file.isDirectory }?.forEach { dir ->
             val logFile = File(dir, "chat_history.txt")
@@ -888,3 +889,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
         entry = tarIn.nextEntry
     }
 }
+
+// Build Trigger: 57467c62

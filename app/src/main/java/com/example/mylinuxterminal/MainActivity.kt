@@ -179,7 +179,7 @@ fun TerminalScreen() {
     val prefs = remember { context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE) }
     var currentChatId by remember { mutableStateOf(UUID.randomUUID().toString()) }
     val chatList = remember { mutableStateListOf<ChatSession>() }
-    val chatsDir = remember { File(context.filesDir, "chats").apply { mkdirs() } }
+    val chatsDir = remember { File("/sdcard/Download/Local_AI_Models/Agent_Chats").apply { mkdirs() } }
     val terminalState = remember { TerminalState() }
     
     var isExtracted by remember { mutableStateOf(false) }
@@ -237,18 +237,27 @@ fun TerminalScreen() {
 
     fun loadAllChats() {
         chatList.clear()
-        chatsDir.listFiles { file -> file.extension == "json" }?.forEach { file ->
-            try {
-                val json = JSONObject(file.readText())
-                chatList.add(
-                    ChatSession(
-                        id = json.getString("id"),
-                        title = json.getString("title"),
-                        timestamp = json.getLong("timestamp"),
-                        logs = List(json.getJSONArray("logs").length()) { i -> json.getJSONArray("logs").getString(i) }
+        chatsDir.listFiles { file -> file.isDirectory }?.forEach { dir ->
+            val logFile = File(dir, "chat_history.txt")
+            if (logFile.exists()) {
+                try {
+                    val logs = logFile.readLines()
+                    val name = dir.name
+                    // فرمت نام پوشه: 2026-10-31_14-30_موضوع چت
+                    val parts = name.split("_", limit = 3)
+                    val title = if (parts.size == 3) parts[2].replace("_", " ") else name
+                    val timestamp = dir.lastModified()
+                    
+                    chatList.add(
+                        ChatSession(
+                            id = dir.absolutePath,
+                            title = title,
+                            timestamp = timestamp,
+                            logs = logs
+                        )
                     )
-                )
-            } catch (e: Exception) {}
+                } catch (e: Exception) {}
+            }
         }
         chatList.sortByDescending { it.timestamp }
     }
@@ -256,35 +265,42 @@ fun TerminalScreen() {
     fun saveCurrentChat() {
         if (agentLogs.isEmpty()) return
         try {
-            // محاسبه تقریبی حجم به بایت (۱۰۰ مگابایت = 104,857,600 بایت)
-            val currentSize = agentLogs.sumOf { it.length }.toLong()
-            val maxSize = 100 * 1024 * 1024 // 100 MB
-            
-            if (currentSize > maxSize) {
-                agentLogs.add("⚠️ Chat size exceeded 100MB limit. Some older logs were truncated.")
+            // محدودیت ۱۰۰ مگابایت
+            val maxSize = 100 * 1024 * 1024
+            if (agentLogs.sumOf { it.length } > maxSize) {
+                agentLogs.add("⚠️ Chat size exceeded 100MB limit. Truncated.")
                 while (agentLogs.sumOf { it.length } > maxSize && agentLogs.size > 100) {
                     agentLogs.removeAt(0)
                 }
             }
 
-            val title = agentLogs.firstOrNull { it.contains("Request:") }?.replace("📝 Request: ", "")?.take(30) ?: "New Chat"
-            val json = JSONObject().apply {
-                put("id", currentChatId)
-                put("title", title)
-                put("timestamp", System.currentTimeMillis())
-                put("logs", JSONArray(agentLogs))
+            val titleRaw = agentLogs.firstOrNull { it.contains("Request:") }?.replace("📝 Request: ", "")?.take(20) ?: "New_Chat"
+            // پاکسازی کاراکترهای غیرمجاز در نام پوشه
+            val safeTitle = titleRaw.replace(Regex("[^a-zA-Z0-9_\\-آ-ی]"), "_")
+            
+            var chatFolder: File
+            if (currentChatId.startsWith("/")) { 
+                // اگر از قبل ذخیره شده، همان پوشه را آپدیت کن
+                chatFolder = File(currentChatId)
+            } else { 
+                // اگر چت جدید است، پوشه جدید با تاریخ و ساعت بساز
+                val now = SimpleDateFormat("yyyy-MM-dd_HH-mm", Locale.US).format(Date())
+                chatFolder = File(chatsDir, "${now}_${safeTitle}")
+                currentChatId = chatFolder.absolutePath // آپدیت ID به مسیر پوشه
             }
-            File(chatsDir, "$currentChatId.json").writeText(json.toString())
+            
+            chatFolder.mkdirs()
+            val logFile = File(chatFolder, "chat_history.txt")
+            logFile.writeText(agentLogs.joinToString("\n"))
+            
             loadAllChats()
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (e: Exception) { e.printStackTrace() }
     }
-    
+
     fun deleteChat(chatId: String) {
         try {
-            val file = File(chatsDir, "$chatId.json")
-            if (file.exists()) file.delete()
+            val dir = File(chatId)
+            if (dir.exists() && dir.isDirectory) dir.deleteRecursively()
             if (currentChatId == chatId) {
                 agentLogs.clear()
                 currentChatId = UUID.randomUUID().toString()
@@ -1227,3 +1243,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: e9790e8d
 
 // Build Trigger: 4cbe617f
+
+// Build Trigger: 343af96e

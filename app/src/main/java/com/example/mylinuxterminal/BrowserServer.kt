@@ -47,6 +47,10 @@ object BrowserServer {
                     "wifi_off" -> if (context != null) HardwareBridge.toggleWifi(context, false) else "Context null"
                     "bt_on" -> HardwareBridge.toggleBluetooth(true)
                     "bt_off" -> HardwareBridge.toggleBluetooth(false)
+                    "brightness" -> {
+                        val level = arg.toIntOrNull() ?: 128
+                        if (context != null) HardwareBridge.setBrightness(context, level) else "Context null"
+                    }
                     else -> "Unknown hardware action"
                 }
 

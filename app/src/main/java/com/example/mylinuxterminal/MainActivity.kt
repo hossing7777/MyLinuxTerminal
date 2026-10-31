@@ -387,7 +387,7 @@ fun TerminalScreen() {
         agentLogs.add("🚀 Autonomous Shell Agent Started...")
         agentLogs.add("📝 Request: $userRequest")
         
-        val pastKnowledge = dbHelper.getMemoryContext()
+        val pastKnowledge = dbHelper.getRelevantMemory(userRequest)
         if (pastKnowledge.isNotBlank()) agentLogs.add("🧠 Loaded Long-Term Memory.")
         
         coroutineScope.launch {
@@ -413,7 +413,7 @@ fun TerminalScreen() {
                     You are an Advanced Reasoning Agent (ReAct).
                     1. FIRST, output your thought process: [THOUGHT] your reasoning here [/THOUGHT]
                     2. SECOND, output a plan: [PLAN] 1. ... 2. ... [/PLAN]
-                    3. THIRD, if you need hardware access, output: [HARDWARE] speak Hello World [/HARDWARE], [HARDWARE] wifi_on [/HARDWARE], [HARDWARE] bt_on [/HARDWARE].
+                    3. THIRD, if you need hardware access, output: [HARDWARE] speak Hello World [/HARDWARE], [HARDWARE] wifi_on [/HARDWARE], [HARDWARE] bt_on [/HARDWARE], [HARDWARE] brightness 200 [/HARDWARE].
                     4. FINALLY, write the Python code to accomplish the terminal task.
                     Reply with the [THOUGHT], [PLAN], [HARDWARE] (optional), and python code block.
                 """.trimIndent()

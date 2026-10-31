@@ -190,6 +190,12 @@ fun TerminalScreen() {
     var showSettings by remember { mutableStateOf(false) }
     
     var showAiDialog by remember { mutableStateOf(false) }
+    var showHistoryDialog by remember { mutableStateOf(false) }
+    var manualMode by remember { mutableStateOf(prefs.getBoolean("manual_mode", false)) }
+    var showManualReview by remember { mutableStateOf(false) }
+    var pendingCode by remember { mutableStateOf("") }
+    var userApprovalDeferred by remember { mutableStateOf<CompletableDeferred<Boolean>?>(null) }
+    var historyContent by remember { mutableStateOf("") }
     var aiPrompt by remember { mutableStateOf("") }
     var isAiRunning by remember { mutableStateOf(false) }
     var agentJob by remember { mutableStateOf<Job?>(null) }
@@ -332,7 +338,7 @@ fun TerminalScreen() {
             )
             
             if (terminalState.ptyFd > 0) {
-                val buf = ByteArray(4096)
+                val buf = ByteArray(65536)
                 while (true) {
                     val len = ptyProcess.readData(buf)
                     if (len > 0) {
@@ -362,6 +368,7 @@ fun TerminalScreen() {
                             for (line in lines) {
                                 if (line.isNotBlank() && !line.contains("::CMD_DONE_")) {
                                     outputLines.add(line)
+                                    if (outputLines.size > 2000) outputLines.removeAt(0)
                                 }
                             }
                             listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
@@ -428,8 +435,22 @@ fun TerminalScreen() {
                         continue
                     }
                     
-                    agentLogs.add("📜 Code Extracted. Writing to disk...")
-                    // 👇 نوشتن مستقیم کد توسط کاتلین (حل مشکل بافر PTY) 👇
+                    agentLogs.add("📜 Code Extracted.")
+                    
+                    if (manualMode) {
+                        agentLogs.add("⏸️ Waiting for manual approval...")
+                        pendingCode = rawCode
+                        showManualReview = true
+                        userApprovalDeferred = CompletableDeferred()
+                        val approved = userApprovalDeferred?.await() ?: false
+                        if (!approved) {
+                            agentLogs.add("❌ User rejected the code. Asking AI for a different approach...")
+                            currentPrompt = "The user rejected your previous code. Please provide a different approach."
+                            continue
+                        }
+                    }
+                    
+                    agentLogs.add("📜 Writing to disk...")
                     val scriptFile = File(context.filesDir, "ai_script.py")
                     scriptFile.writeText(rawCode)
                     
@@ -618,6 +639,31 @@ fun TerminalScreen() {
         )
     }
 
+    
+    if (showManualReview) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("Review Code", color = Color.Yellow) },
+            text = {
+                Box(modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()).background(Color.Black).padding(8.dp)) {
+                    Text(pendingCode, color = Color.Green, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                }
+            },
+            confirmButton = { 
+                Button(onClick = { 
+                    showManualReview = false
+                    userApprovalDeferred?.complete(true)
+                }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006600))) { Text("Run Code") } 
+            },
+            dismissButton = {
+                Button(onClick = { 
+                    showManualReview = false
+                    userApprovalDeferred?.complete(false)
+                }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) { Text("Reject") }
+            }
+        )
+    }
+
     if (showAiDialog) {
         AlertDialog(
             onDismissRequest = { if (!isAiRunning) showAiDialog = false },
@@ -666,6 +712,23 @@ fun TerminalScreen() {
         )
     }
 
+    
+    if (showHistoryDialog) {
+        AlertDialog(
+            onDismissRequest = { showHistoryDialog = false },
+            title = { Text("Agent History", color = Color.Cyan) },
+            text = {
+                Column(modifier = Modifier.heightIn(max = 400.dp)) {
+                    Text("Chat History:", color = Color.Yellow)
+                    Box(modifier = Modifier.height(150.dp).verticalScroll(rememberScrollState()).background(Color.Black).padding(8.dp)) {
+                        Text(historyContent, color = Color.LightGray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showHistoryDialog = false }) { Text("Close", color = Color.Cyan) } }
+        )
+    }
+
     if (showSettings) {
         AlertDialog(
             onDismissRequest = { showSettings = false },
@@ -695,6 +758,17 @@ fun TerminalScreen() {
                         }
                     }
                     Button(onClick = { prefs.edit().putString("api_key", apiKey).apply(); Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show() }, modifier = Modifier.padding(top = 12.dp)) { Text("ذخیره کلید") }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = manualMode, 
+                            onCheckedChange = { 
+                                manualMode = it
+                                prefs.edit().putBoolean("manual_mode", it).apply()
+                            }
+                        )
+                        Text("Manual Code Review (حالت دستی)", color = Color.White)
+                    }
                 }
             },
             confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Close", color = Color.Cyan) } }
@@ -708,6 +782,12 @@ fun TerminalScreen() {
                 title = { Text("HguTerminal", color = Color.Cyan, fontWeight = FontWeight.Bold) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF1E1E1E)),
                 actions = {
+                    IconButton(onClick = { showHistoryDialog = true 
+                        try {
+                            val f = File("/sdcard/Download/Local_AI_Models/chat_history.txt")
+                            if (f.exists()) historyContent = f.readText().takeLast(1500) else historyContent = "No history yet."
+                        } catch(e: Exception) {}
+                    }) { Icon(Icons.Default.List, "History", tint = Color.White) }
                     IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
                 }
             )
@@ -747,6 +827,7 @@ fun FileViewerScreen() {
     var selectedFileContent by remember { mutableStateOf<String?>(null) }
     var selectedFileName by remember { mutableStateOf("") }
     var currentPath by remember { mutableStateOf("/sdcard/Download") }
+    var previewAsHtml by remember { mutableStateOf(false) }
 
     LaunchedEffect(currentPath) {
         val dir = File(currentPath)
@@ -812,11 +893,33 @@ fun FileViewerScreen() {
                 onDismissRequest = { selectedFileContent = null },
                 title = { Text(selectedFileName, color = Color.Cyan) },
                 text = {
-                    Box(modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) {
-                        Text(selectedFileContent ?: "", color = Color.White, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                    if (previewAsHtml && selectedFileName.endsWith(".html")) {
+                        androidx.compose.ui.viewinterop.AndroidView(
+                            factory = { ctx ->
+                                android.webkit.WebView(ctx).apply {
+                                    settings.javaScriptEnabled = true
+                                    setBackgroundColor(android.graphics.Color.DKGRAY)
+                                    loadDataWithBaseURL(null, selectedFileContent ?: "", "text/html", "UTF-8", null)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().height(400.dp)
+                        )
+                    } else {
+                        Box(modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) {
+                            Text(selectedFileContent ?: "", color = Color.White, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                        }
                     }
                 },
-                confirmButton = { TextButton(onClick = { selectedFileContent = null }) { Text("Close", color = Color.Cyan) } }
+                confirmButton = { 
+                    Row {
+                        if (selectedFileName.endsWith(".html")) {
+                            TextButton(onClick = { previewAsHtml = !previewAsHtml }) { 
+                                Text(if (previewAsHtml) "View Source" else "Render HTML", color = Color.Yellow) 
+                            }
+                        }
+                        TextButton(onClick = { selectedFileContent = null }) { Text("Close", color = Color.Cyan) } 
+                    }
+                }
             )
         }
     }
@@ -954,3 +1057,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 }
 
 // Build Trigger: 6cd6435c
+
+// Build Trigger: 180316a6

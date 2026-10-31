@@ -649,7 +649,7 @@ fun TerminalScreen() {
                     } else if (agentViewMode == 3) {
                         Text("Long-Term Memory:", color = Color.Yellow, fontSize = 12.sp)
                         Box(modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black).padding(8.dp).verticalScroll(rememberScrollState())) {
-                            Text(dbHelper.getMemoryContext(), color = Color.LightGray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                            Text(dbHelper.getRelevantMemory(""), color = Color.LightGray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
                         }
                     }
 

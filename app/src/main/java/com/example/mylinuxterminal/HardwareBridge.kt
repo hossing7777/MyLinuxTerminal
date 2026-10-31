@@ -63,10 +63,19 @@ object HardwareBridge {
     fun toggleBluetooth(enable: Boolean): String {
         return try {
             val adapter = BluetoothAdapter.getDefaultAdapter() ?: return "Bluetooth not supported"
+            
+            // چک کردن مجوز در اندروید 12+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val ctx = appContext ?: return "Context is null"
+                if (androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.BLUETOOTH_CONNECT) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    return "Error: Missing BLUETOOTH_CONNECT permission."
+                }
+            }
+            
             @Suppress("DEPRECATION")
             if (enable) adapter.enable() else adapter.disable()
             "Bluetooth ${if (enable) "ON" else "OFF"}"
-        } catch (e: Exception) { "Error: ${e.message}" }
+        } catch (e: Exception) { "Error: ${e.message ?: e.javaClass.simpleName}" }
     }
 
     fun setBrightness(context: Context, level: Int): String {

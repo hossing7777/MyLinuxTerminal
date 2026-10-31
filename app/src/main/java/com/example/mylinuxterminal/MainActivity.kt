@@ -200,6 +200,11 @@ fun TerminalScreen() {
     
     val manageStorageLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.StartActivityForResult()) {}
     
+    // درخواست مجوز بلوتوث برای اندروید ۱۲+
+    val bluetoothPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+        if (!isGranted) Toast.makeText(context, "Bluetooth permission denied. Agent cannot control BT.", Toast.LENGTH_SHORT).show()
+    }
+    
     fun checkStoragePermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
             val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
@@ -397,6 +402,14 @@ fun TerminalScreen() {
         extractLinux(context, mutableListOf<String>())
         isExtracted = true
         checkStoragePermission()
+        
+        // چک کردن مجوز بلوتوث در اندروید 12+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                bluetoothPermissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+        }
+        
         if (setupDoneFile.exists()) startTerminal(emptyList()) else showPackageDialog = true
     }
 

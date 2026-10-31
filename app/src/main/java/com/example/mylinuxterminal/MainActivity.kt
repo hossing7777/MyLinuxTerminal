@@ -547,7 +547,6 @@ fun TerminalScreen() {
             runShellAgent(userRequest)
             return
         }
-        // (API logic here - unchanged for now)
     }
 
     if (showPackageDialog) {
@@ -800,4 +799,115 @@ fun FileViewerScreen() {
     }
 }
 
-// (LocalAIScreen and helper functions omitted for brevity, but included in the actual file content below)
+@Composable
+fun LocalAIScreen() {
+    val context = LocalContext.current
+    Column(modifier = Modifier.fillMaxSize().background(Color(0xFF121212)).padding(16.dp)) {
+        Text("Local AI (Offline)", color = Color.Cyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(8.dp))
+        Text("Local AI needs a .gguf model in /sdcard/Download/Local_AI_Models", color = Color.Yellow, fontSize = 12.sp)
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(onClick = { Toast.makeText(context, "Not implemented in this build", Toast.LENGTH_SHORT).show() }, modifier = Modifier.fillMaxWidth()) { Text("Start Local Server") }
+    }
+}
+
+fun cleanAnsi(text: String): String {
+    var cleaned = text
+    cleaned = cleaned.replace(Regex("""\u001B\[[0-9;?]*[a-zA-Z]"""), "")
+    cleaned = cleaned.replace(Regex("""\u001B\([a-zA-Z0-9]"""), "")
+    cleaned = cleaned.replace(Regex("""[\u000E\u000F]"""), "")
+    return cleaned
+}
+
+suspend fun extractLinux(context: Context, outputLines: MutableList<String>) = withContext(Dispatchers.IO) {
+    val alpineDir = File(context.filesDir, "alpine")
+    val assets = context.assets.list("") ?: emptyArray()
+    val assetName = if (assets.contains("alpine.tar.gz")) "alpine.tar.gz" else "alpine.tar"
+    if (!alpineDir.exists() || alpineDir.listFiles()?.isEmpty() == true) {
+        try { alpineDir.mkdirs(); context.assets.open(assetName).use { input -> extractTarSmart(input, alpineDir) } } catch (e: Exception) { Log.e("Terminal", "Extract Error", e) }
+    }
+    fixAlpineStructure(alpineDir)
+}
+
+fun fixAlpineStructure(alpineDir: File) {
+    try {
+        val binDir = File(alpineDir, "bin")
+        val usrBinDir = File(alpineDir, "usr/bin")
+        val libDir = File(alpineDir, "lib")
+        val etcDir = File(alpineDir, "etc")
+        if (binDir.exists() && !binDir.isDirectory) binDir.delete()
+        binDir.mkdirs()
+        if (usrBinDir.exists() && !usrBinDir.isDirectory) usrBinDir.delete()
+        usrBinDir.mkdirs()
+        if (!etcDir.exists()) etcDir.mkdirs()
+        val resolvConf = File(etcDir, "resolv.conf")
+        if (!resolvConf.exists()) resolvConf.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
+        var busybox = File(binDir, "busybox")
+        if (!busybox.exists() || busybox.length() < 100000L) {
+            val usrBusybox = File(usrBinDir, "busybox")
+            if (usrBusybox.exists() && usrBusybox.length() > 100000L) busybox = usrBusybox
+        }
+        if (busybox.exists()) {
+            val applets = listOf("sh", "ls", "cat", "echo", "pwd", "mkdir", "rm", "cp", "mv", "chmod", "grep", "sed", "awk", "find", "vi")
+            for (applet in applets) {
+                val appletBin = File(binDir, applet)
+                try { appletBin.delete() } catch (e: Exception) {}
+                busybox.copyTo(appletBin, overwrite = true)
+                appletBin.setExecutable(true)
+                val appletUsrBin = File(usrBinDir, applet)
+                try { appletUsrBin.delete() } catch (e: Exception) {}
+                busybox.copyTo(appletUsrBin, overwrite = true)
+                appletUsrBin.setExecutable(true)
+            }
+        }
+        if (libDir.exists() && !libDir.isDirectory) libDir.delete()
+        libDir.mkdirs()
+        val ldMusl = File(libDir, "ld-musl-aarch64.so.1")
+        if (!ldMusl.exists()) {
+            val libc = File(libDir, "libc.musl-aarch64.so.1")
+            if (libc.exists()) { libc.copyTo(ldMusl, overwrite = true); ldMusl.setExecutable(true) }
+        }
+        File(alpineDir, "tmp").mkdirs()
+        File(alpineDir, "root").mkdirs()
+    } catch (e: Exception) { Log.e("Terminal", "Fix structure error", e) }
+}
+
+fun extractTarSmart(inputStream: InputStream, destDir: File) {
+    val bufferedInputStream = BufferedInputStream(inputStream)
+    bufferedInputStream.mark(2)
+    val signature = ByteArray(2)
+    bufferedInputStream.read(signature)
+    bufferedInputStream.reset()
+    val isGzip = signature[0] == 0x1f.toByte() && signature[1] == 0x8b.toByte()
+    if (isGzip) {
+        GzipCompressorInputStream(bufferedInputStream).use { gzipIn -> TarArchiveInputStream(gzipIn).use { tarIn -> extractEntries(tarIn, destDir) } }
+    } else {
+        TarArchiveInputStream(bufferedInputStream).use { tarIn -> extractEntries(tarIn, destDir) }
+    }
+}
+
+fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
+    var entry: TarArchiveEntry? = tarIn.nextEntry
+    while (entry != null) {
+        try {
+            val destFile = File(destDir, entry.name)
+            if (!destFile.canonicalPath.startsWith(destDir.canonicalPath + File.separator)) { entry = tarIn.nextEntry; continue }
+            if (entry.isDirectory) {
+                destFile.mkdirs()
+            } else if (entry.isSymbolicLink) {
+                try { Files.createSymbolicLink(Paths.get(destFile.absolutePath), Paths.get(entry.linkName)) } catch (e: Exception) {}
+            } else {
+                destFile.parentFile?.mkdirs()
+                destFile.outputStream().use { output -> tarIn.copyTo(output) }
+                if (entry.mode != 0) {
+                    try {
+                        val octal = Integer.toOctalString(entry.mode).takeLast(3)
+                        val perms = buildString { for (c in octal) { val v = Character.digit(c, 8); append(if (v and 4 != 0) "r" else "-"); append(if (v and 2 != 0) "w" else "-"); append(if (v and 1 != 0) "x" else "-") } }
+                        Files.setPosixFilePermissions(Paths.get(destFile.absolutePath), PosixFilePermissions.fromString(perms))
+                    } catch (e: Exception) { }
+                }
+            }
+        } catch (e: Exception) { Log.e("Terminal", "Error extracting", e) }
+        entry = tarIn.nextEntry
+    }
+}

@@ -436,8 +436,8 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
                 
                 while (iteration < 7 && isAiRunning) {
                     iteration++
-                    aiProgress = 10 + (iteration * 15)
-                    agentLogs.add("🔄 Attempt $iteration/5...")
+                    aiProgress = 10 + (iteration * 10)
+                    agentLogs.add("🔄 Attempt $iteration/7...")
                     
                     agentLogs.add("⌨️ Sending prompt to AI...")
                     BrowserBridge.typeText(currentPrompt)
@@ -452,7 +452,7 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
                     rawCode = rawCode.replace("\\u003C", "<").replace("\\u003E", ">").replace("&lt;", "<").replace("&gt;", ">").replace("\\u0026", "&")
                     
                     if (rawCode == "NO_CODE_FOUND" || rawCode.isBlank() || rawCode.contains("Error: Browser not ready")) {
-                        agentLogs.add("⚠️ No code found. Retrying...")
+                        agentLogs.add("⚠️ No valid code found. Retrying...")
                         currentPrompt = "Please provide a valid Python code block for: $userRequest"
                         continue
                     }
@@ -463,25 +463,17 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
                               "echo '$b64Code' | base64 -d > /root/ai_script.py && python3 /root/ai_script.py 2>&1"
                     
                     val output = executeCommandAndWait(cmd)
-                    val cleanOutput = output.lines().filter { 
-                        !it.contains("stty -echo") && 
-                        !it.contains("::CMD_DONE") && 
-                        !it.contains("base64 -d") &&
-                        it.isNotBlank() 
-                    }.joinToString("\n")
-                    agentLogs.add("📄 Output:\n$cleanOutput")
                     
                     val cleanOutputForAI = output.lines().filter { 
                         !it.contains("stty -echo") && !it.contains("::CMD_DONE") && 
                         !it.contains("base64 -d") && !it.contains("apk add python3") && it.isNotBlank() 
-                    }.joinToString("
-")
+                    }.joinToString("\n")
                     
-                    // 👇 لایه صحت‌سنجی جدید (Verification Layer) 👇
+                    // 👇 لایه صحت‌سنجی (Verification Layer) 👇
                     var verificationPassed = true
                     var verificationLog = ""
                     
-                    val pathRegex = Regex("""(/sdcard/Download/[a-zA-Z0-9_\-\./]+)""")
+                    val pathRegex = Regex("""(/sdcard/Download/[a-zA-Z0-9_./-]+)""")
                     val pathsToVerify = pathRegex.findAll(userRequest).map { it.value }.toList()
                     
                     if (pathsToVerify.isNotEmpty()) {
@@ -490,12 +482,9 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
                             val lsOutput = executeCommandAndWait("ls -la $path 2>&1")
                             if (lsOutput.contains("No such file or directory") || lsOutput.contains("not found") || lsOutput.isBlank()) {
                                 verificationPassed = false
-                                verificationLog += "❌ Path not found or empty: $path
-"
+                                verificationLog += "❌ Path not found or empty: $path\n"
                             } else {
-                                verificationLog += "✅ Path exists: $path
-$lsOutput
-"
+                                verificationLog += "✅ Path exists: $path\n$lsOutput\n"
                             }
                         }
                     }
@@ -512,30 +501,27 @@ $lsOutput
                             agentLogs.add("❌ Verification Failed: Files were not created! Asking AI to fix...")
                         }
                         
-                        currentPrompt = "I ran your code. Here is the terminal output:
-$cleanOutputForAI
-
-" +
-                                        "I also verified the requested files. Here is the result:
-$verificationLog
-
-" +
+                        currentPrompt = "I ran your code. Here is the terminal output:\n$cleanOutputForAI\n\n" +
+                                        "I also verified the requested files. Here is the result:\n$verificationLog\n\n" +
                                         "The files are missing or there was an error. Please fix your code and provide the COMPLETE corrected Python code. Make sure it actually creates the files."
                     } else {
                         agentLogs.add("✅ Task completed successfully!")
-                        saveAgentLogs()
                         aiProgress = 100
                         isAiRunning = false
+                        saveAgentLogs()
                         return@launch
                     }
                 }
+                
                 if (isAiRunning) {
                     agentLogs.add("🛑 Max attempts reached. Stopping.")
                     isAiRunning = false
+                    saveAgentLogs()
                 }
             } catch (e: Exception) {
                 agentLogs.add("❌ Exception: ${e.message}")
                 isAiRunning = false
+                saveAgentLogs()
             }
         }
     }
@@ -988,3 +974,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 }
 
 // Build Trigger Verify: 0d650523
+
+// Build Trigger: ec56f529

@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.speech.RecognizerIntent
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -616,7 +617,7 @@ fun TerminalScreen() {
                                     } catch (e: Exception) {
                                         Toast.makeText(context, "Speech recognition not available", Toast.LENGTH_SHORT).show()
                                     }
-                                }) { Icon(Icons.Default.Mic, "Speak", tint = Color.Cyan) }
+                                }) { Icon(Icons.Default.Search, "Speak", tint = Color.Cyan) }
                                 Button(onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))) { Text("شروع", fontSize = 16.sp) }
                             }
                         } else {
@@ -949,3 +950,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: 37d83d6b
 
 // Build Trigger: 7b206856
+
+// Build Trigger: 79b6aea1

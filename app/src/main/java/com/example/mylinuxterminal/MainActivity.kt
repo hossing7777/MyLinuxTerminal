@@ -256,6 +256,17 @@ fun TerminalScreen() {
     fun saveCurrentChat() {
         if (agentLogs.isEmpty()) return
         try {
+            // محاسبه تقریبی حجم به بایت (۱۰۰ مگابایت = 104,857,600 بایت)
+            val currentSize = agentLogs.sumOf { it.length }.toLong()
+            val maxSize = 100 * 1024 * 1024 // 100 MB
+            
+            if (currentSize > maxSize) {
+                agentLogs.add("⚠️ Chat size exceeded 100MB limit. Some older logs were truncated.")
+                while (agentLogs.sumOf { it.length } > maxSize && agentLogs.size > 100) {
+                    agentLogs.removeAt(0)
+                }
+            }
+
             val title = agentLogs.firstOrNull { it.contains("Request:") }?.replace("📝 Request: ", "")?.take(30) ?: "New Chat"
             val json = JSONObject().apply {
                 put("id", currentChatId)
@@ -264,6 +275,20 @@ fun TerminalScreen() {
                 put("logs", JSONArray(agentLogs))
             }
             File(chatsDir, "$currentChatId.json").writeText(json.toString())
+            loadAllChats()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+    
+    fun deleteChat(chatId: String) {
+        try {
+            val file = File(chatsDir, "$chatId.json")
+            if (file.exists()) file.delete()
+            if (currentChatId == chatId) {
+                agentLogs.clear()
+                currentChatId = UUID.randomUUID().toString()
+            }
             loadAllChats()
         } catch (e: Exception) {}
     }
@@ -795,20 +820,31 @@ fun TerminalScreen() {
                         LazyColumn(modifier = Modifier.fillMaxWidth().height(250.dp)) {
                             items(chatList) { chat ->
                                 Card(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable {
-                                        agentLogs.clear()
-                                        agentLogs.addAll(chat.logs)
-                                        currentChatId = chat.id
-                                        agentViewMode = 0
-                                    },
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                     colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A))
                                 ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
-                                        Text(chat.title, color = Color.Cyan, fontWeight = FontWeight.Bold, maxLines = 1)
-                                        Text(
-                                            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(chat.timestamp)),
-                                            color = Color.Gray, fontSize = 10.sp
-                                        )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.weight(1f).clickable {
+                                                agentLogs.clear()
+                                                agentLogs.addAll(chat.logs)
+                                                currentChatId = chat.id
+                                                agentViewMode = 0 // رفتن به تب چت
+                                            }
+                                        ) {
+                                            Text(chat.title, color = Color.Cyan, fontWeight = FontWeight.Bold, maxLines = 1)
+                                            Text(
+                                                SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(chat.timestamp)),
+                                                color = Color.Gray, fontSize = 10.sp
+                                            )
+                                        }
+                                        IconButton(onClick = { deleteChat(chat.id) }) {
+                                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red)
+                                        }
                                     }
                                 }
                             }
@@ -1189,3 +1225,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: 1363fb94
 
 // Build Trigger: e9790e8d
+
+// Build Trigger: 4cbe617f

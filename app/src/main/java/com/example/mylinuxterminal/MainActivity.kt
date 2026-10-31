@@ -525,6 +525,38 @@ fun TerminalScreen() {
                         continue
                     }
 
+                    // 🚀 HARDWARE INTERCEPTOR 🚀
+                    var handledByInterceptor = false
+                    if (extractedCode.contains("termux-vibrate")) {
+                        val durMatch = Regex("""termux-vibrate.*?(\\d+)""").find(extractedCode)
+                        val dur = durMatch?.groupValues?.get(1)?.toLongOrNull() ?: 500L
+                        agentLogs.add("⚙️ Intercepted termux-vibrate! Vibrating for ${'$'}dur ms...")
+                        HardwareBridge.vibrate(context, dur)
+                        handledByInterceptor = true
+                    }
+                    if (extractedCode.contains("termux-volume")) {
+                        val volMatch = Regex("""termux-volume.*?(\\d+)""").find(extractedCode)
+                        val vol = volMatch?.groupValues?.get(1)?.toIntOrNull() ?: 50
+                        agentLogs.add("⚙️ Intercepted termux-volume! Setting volume to ${'$'}vol%...")
+                        HardwareBridge.setVolume(context, vol)
+                        handledByInterceptor = true
+                    }
+                    if (extractedCode.contains("termux-brightness")) {
+                        val brightMatch = Regex("""termux-brightness.*?(\\d+)""").find(extractedCode)
+                        val bright = brightMatch?.groupValues?.get(1)?.toIntOrNull() ?: 128
+                        agentLogs.add("⚙️ Intercepted termux-brightness! Setting brightness to ${'$'}bright...")
+                        HardwareBridge.setBrightness(context, bright)
+                        handledByInterceptor = true
+                    }
+
+                    if (handledByInterceptor) {
+                        agentLogs.add("✅ Hardware Task executed successfully via Interceptor!")
+                        aiProgress = 100
+                        isAiRunning = false
+                        return@launch
+                    }
+                    // 🚀 END INTERCEPTOR 🚀
+                    
                     agentLogs.add("📜 Code Extracted. Writing to disk...")
                     val scriptFile = File(context.filesDir, "ai_script.py")
                     scriptFile.writeText(extractedCode)

@@ -735,7 +735,7 @@ fun TerminalScreen() {
                         Spacer(modifier = Modifier.height(16.dp))
                         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = { filePickerLauncher.launch("*/*") }) { 
-                                Icon(Icons.Default.AttachFile, "Attach File", tint = Color.Cyan) 
+                                Icon(Icons.Default.Add, "Attach File", tint = Color.Cyan) 
                             }
                             Button(
                                 onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) },
@@ -1115,3 +1115,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: 5f8e44f2
 
 // Build Trigger: af262c53
+
+// Build Trigger: d7678f25

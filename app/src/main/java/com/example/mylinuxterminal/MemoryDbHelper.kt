@@ -13,10 +13,7 @@ class MemoryDbHelper(context: Context) : SQLiteOpenHelper(context, "AgentMemory.
 
     fun addMemory(type: String, content: String) {
         try {
-            val values = ContentValues().apply {
-                put("type", type)
-                put("content", content)
-            }
+            val values = ContentValues().apply { put("type", type); put("content", content) }
             writableDatabase.insert("memory", null, values)
         } catch (e: Exception) { e.printStackTrace() }
     }
@@ -24,10 +21,8 @@ class MemoryDbHelper(context: Context) : SQLiteOpenHelper(context, "AgentMemory.
     fun getMemoryContext(): String {
         val sb = StringBuilder()
         try {
-            val cursor = readableDatabase.rawQuery("SELECT type, content FROM memory ORDER BY id DESC LIMIT 15", null)
-            while (cursor.moveToNext()) {
-                sb.append("- [${cursor.getString(0)}] ${cursor.getString(1)}\n")
-            }
+            val cursor = readableDatabase.rawQuery("SELECT type, content FROM memory ORDER BY id DESC LIMIT 10", null)
+            while (cursor.moveToNext()) { sb.append("- [${cursor.getString(0)}] ${cursor.getString(1)}\n") }
             cursor.close()
         } catch (e: Exception) { e.printStackTrace() }
         return sb.toString()

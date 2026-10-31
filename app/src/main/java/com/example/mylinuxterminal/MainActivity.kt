@@ -495,9 +495,37 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
                                            output.contains("Timed Out", true)
 
                     if (hasTerminalError || !verificationPassed) {
-                        if (hasTerminalError) {
-                            agentLogs.add("❌ Terminal Error detected! Asking AI to fix...")
+                        if (output.contains("Timed Out", true)) {
+                            agentLogs.add("❌ Timeout detected! Code is too slow. Asking AI to simplify...")
+                            currentPrompt = "Your previous code TIMED OUT after 2 minutes. It is likely too slow or has an infinite loop. " +
+                                            "Please rewrite the code using MUCH SIMPLER logic. Do not use heavy audio loops. " +
+                                            "ALWAYS use os.makedirs(directory, exist_ok=True) at the very beginning. " +
+                                            "Reply ONLY with the complete, simplified Python code."
+                        } else if (!verificationPassed) {
+                            agentLogs.add("❌ Verification Failed: Files were not created! Asking AI to fix...")
+                            currentPrompt = "I ran your code, but the requested files were NOT created.
+" +
+                                            "Terminal output:
+$cleanOutputForAI
+" +
+                                            "Verification result:
+$verificationLog
+" +
+                                            "You MUST use os.makedirs(directory, exist_ok=True) to create the folder first, then write the files. " +
+                                            "Please fix your code and reply ONLY with the complete corrected Python code."
                         } else {
+                            agentLogs.add("❌ Terminal Error detected! Asking AI to fix...")
+                            currentPrompt = "The code failed with this error:
+$cleanOutputForAI
+
+" +
+                                            "Here is the failed code:
+$rawCode
+
+" +
+                                            "Please fix the error and provide the COMPLETE corrected Python code."
+                        }
+                    } else {
                             agentLogs.add("❌ Verification Failed: Files were not created! Asking AI to fix...")
                         }
                         
@@ -976,3 +1004,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger Verify: 0d650523
 
 // Build Trigger: ec56f529
+
+// Build Trigger: b45721ec

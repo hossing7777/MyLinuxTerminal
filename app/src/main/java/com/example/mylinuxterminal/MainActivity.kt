@@ -177,6 +177,9 @@ fun MainScreen() {
 fun TerminalScreen() {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE) }
+    var currentChatId by remember { mutableStateOf(UUID.randomUUID().toString()) }
+    val chatList = remember { mutableStateListOf<ChatSession>() }
+    val chatsDir = remember { File(context.filesDir, "chats").apply { mkdirs() } }
     val terminalState = remember { TerminalState() }
     
     var isExtracted by remember { mutableStateOf(false) }
@@ -266,9 +269,6 @@ fun TerminalScreen() {
     }
 
         val ptyProcess = remember { PtyProcess() }
-    var currentChatId by remember { mutableStateOf(UUID.randomUUID().toString()) }
-    val chatList = remember { mutableStateListOf<ChatSession>() }
-    val chatsDir = remember { File(context.filesDir, "chats").apply { mkdirs() } }
 
     val outputLines = remember { mutableStateListOf<String>() }
     val listState = rememberLazyListState()
@@ -1187,3 +1187,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: b0c08a2d
 
 // Build Trigger: 1363fb94
+
+// Build Trigger: e9790e8d

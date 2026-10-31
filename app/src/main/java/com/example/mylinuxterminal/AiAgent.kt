@@ -55,6 +55,10 @@ class AiAgent {
             - wifi_on / wifi_off
             - bt_on / bt_off
             - speak <text> (e.g. [HARDWARE] speak Hello World [/HARDWARE])
+            - wifi_on (e.g. [HARDWARE] wifi_on [/HARDWARE])
+            - wifi_off (e.g. [HARDWARE] wifi_off [/HARDWARE])
+            - bt_on (e.g. [HARDWARE] bt_on [/HARDWARE])
+            - bt_off (e.g. [HARDWARE] bt_off [/HARDWARE])
 
 
             BROWSER AUTOMATION AGENT (SUPER IMPORTANT):        """.trimIndent()

@@ -455,6 +455,26 @@ fun TerminalScreen() {
                 delay(5000)
                 
                 var iteration = 0
+                var currentPrompt = """
+                        PAST KNOWLEDGE:
+                        $pastKnowledge
+                        
+                        TASK: $userRequest.
+                        
+                        INSTRUCTIONS:
+                        You are an Advanced Reasoning Agent (ReAct).
+                        1. FIRST, output your thought process: [THOUGHT] your reasoning here [/THOUGHT]
+                        2. SECOND, output a plan: [PLAN] 1. ... 2. ... [/PLAN]
+                        3. THIRD, if you need hardware access, output: [HARDWARE] speak Hello World [/HARDWARE], [HARDWARE] wifi_on [/HARDWARE], [HARDWARE] bt_on [/HARDWARE].
+                        4. FINALLY, write the Python code to accomplish the terminal task.
+                        Reply with the [THOUGHT], [PLAN], [HARDWARE] (optional), and python code block.
+                    """.trimIndent()
+                    
+                    agentLogs.add("🌐 Navigating to Duck.ai...")
+                BrowserBridge.loadUrl("https://duck.ai")
+                delay(5000)
+                
+                var iteration = 0
                 var currentPrompt = "PAST KNOWLEDGE:
 $pastKnowledge
 
@@ -1057,3 +1077,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: 45545e0f
 
 // Build Trigger: 5f785e7f
+
+// Build Trigger: 24de55c2

@@ -19,6 +19,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -91,16 +92,7 @@ val availableModels = listOf(
     "shell_agent" to "🤖 Shell Agent (No API)",
     "full_auto" to "🔧 Full Auto (Recommended)",
     "auto" to "⚡ Auto (Orchestrator)",
-    "parallel" to "🚀 Parallel (Race 3 Models)",
-    "nvidia/nemotron-3-ultra-550b-a55b:free" to "Nemotron 3 Ultra",
-    "thinkingmachines/inkling:free" to "Inkling",
-    "cohere/north-mini-code:free" to "Cohere North"
-)
-
-val fallbackModels = listOf(
-    "nvidia/nemotron-3-ultra-550b-a55b:free",
-    "thinkingmachines/inkling:free",
-    "cohere/north-mini-code:free"
+    "nvidia/nemotron-3-ultra-550b-a55b:free" to "Nemotron 3 Ultra"
 )
 
 class LocalAIState {
@@ -126,47 +118,19 @@ fun MainScreen() {
     Scaffold(
         bottomBar = {
             NavigationBar(containerColor = Color(0xFF1E1E1E)) {
-                NavigationBarItem(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    icon = { Icon(Icons.Default.Home, contentDescription = "Terminal", tint = Color.Cyan) },
-                    label = { Text("Terminal", color = Color.Cyan) }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    icon = { Icon(Icons.Default.Settings, contentDescription = "Local AI", tint = Color.Cyan) },
-                    label = { Text("Local AI", color = Color.Cyan) }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    icon = { Icon(Icons.Default.Search, contentDescription = "Browser", tint = Color.Cyan) },
-                    label = { Text("Browser", color = Color.Cyan) }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 3,
-                    onClick = { selectedTab = 3 },
-                    icon = { Icon(Icons.Default.List, contentDescription = "Files", tint = Color.Cyan) },
-                    label = { Text("Files", color = Color.Cyan) }
-                )
+                NavigationBarItem(selected = selectedTab == 0, onClick = { selectedTab = 0 }, icon = { Icon(Icons.Default.Home, "Terminal", tint = Color.Cyan) }, label = { Text("Terminal", color = Color.Cyan) })
+                NavigationBarItem(selected = selectedTab == 1, onClick = { selectedTab = 1 }, icon = { Icon(Icons.Default.Settings, "Local AI", tint = Color.Cyan) }, label = { Text("Local AI", color = Color.Cyan) })
+                NavigationBarItem(selected = selectedTab == 2, onClick = { selectedTab = 2 }, icon = { Icon(Icons.Default.Search, "Browser", tint = Color.Cyan) }, label = { Text("Browser", color = Color.Cyan) })
+                NavigationBarItem(selected = selectedTab == 3, onClick = { selectedTab = 3 }, icon = { Icon(Icons.Default.List, "Files", tint = Color.Cyan) }, label = { Text("Files", color = Color.Cyan) })
             }
         }
     ) { paddingValues ->
         Box(modifier = Modifier.padding(paddingValues)) {
             Box(modifier = Modifier.fillMaxSize()) {
-                Box(modifier = Modifier.fillMaxSize().zIndex(if (selectedTab == 0) 1f else 0f)) {
-                    TerminalScreen()
-                }
-                Box(modifier = Modifier.fillMaxSize().zIndex(if (selectedTab == 1) 1f else 0f)) {
-                    LocalAIScreen(localAiState, mainScope)
-                }
-                Box(modifier = Modifier.fillMaxSize().zIndex(if (selectedTab == 2) 1f else 0f)) {
-                    BrowserScreen()
-                }
-                Box(modifier = Modifier.fillMaxSize().zIndex(if (selectedTab == 3) 1f else 0f)) {
-                    FileViewerScreen()
-                }
+                Box(modifier = Modifier.fillMaxSize().zIndex(if (selectedTab == 0) 1f else 0f)) { TerminalScreen() }
+                Box(modifier = Modifier.fillMaxSize().zIndex(if (selectedTab == 1) 1f else 0f)) { LocalAIScreen(localAiState, mainScope) }
+                Box(modifier = Modifier.fillMaxSize().zIndex(if (selectedTab == 2) 1f else 0f)) { BrowserScreen() }
+                Box(modifier = Modifier.fillMaxSize().zIndex(if (selectedTab == 3) 1f else 0f)) { FileViewerScreen() }
             }
         }
     }
@@ -177,10 +141,8 @@ fun MainScreen() {
 fun TerminalScreen() {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE) }
-    var currentChatId by remember { mutableStateOf(UUID.randomUUID().toString()) }
-    val chatList = remember { mutableStateListOf<ChatSession>() }
-    val chatsDir = remember { File("/sdcard/Download/Local_AI_Models/Agent_Chats").apply { mkdirs() } }
     val terminalState = remember { TerminalState() }
+    val dbHelper = remember { MemoryDbHelper(context) }
     
     var isExtracted by remember { mutableStateOf(false) }
     var showPackageDialog by remember { mutableStateOf(false) }
@@ -193,47 +155,51 @@ fun TerminalScreen() {
     var showSettings by remember { mutableStateOf(false) }
     
     var showAiDialog by remember { mutableStateOf(false) }
-    var showHistoryDialog by remember { mutableStateOf(false) }
-    var manualMode by remember { mutableStateOf(prefs.getBoolean("manual_mode", false)) }
-    var showManualReview by remember { mutableStateOf(false) }
-    var pendingCode by remember { mutableStateOf("") }
-    var userApprovalDeferred by remember { mutableStateOf<CompletableDeferred<Boolean>?>(null) }
-    var historyContent by remember { mutableStateOf("") }
     var aiPrompt by remember { mutableStateOf("") }
     var isAiRunning by remember { mutableStateOf(false) }
     var agentJob by remember { mutableStateOf<Job?>(null) }
     var aiProgress by remember { mutableStateOf(0) }
-    var currentHistory by remember { mutableStateOf(JSONArray()) }
+    var agentViewMode by remember { mutableStateOf(0) }
+    var currentPlan by remember { mutableStateOf("") }
+    
+    var currentChatId by remember { mutableStateOf(UUID.randomUUID().toString()) }
+    val chatList = remember { mutableStateListOf<ChatSession>() }
+    val chatsDir = remember { File("/sdcard/Download/Local_AI_Models/Agent_Chats").apply { mkdirs() } }
     val agentLogs = remember { mutableStateListOf<String>() }
     
-    var longTermMemory by remember { mutableStateOf(prefs.getString("lt_memory", "No successful commands yet.") ?: "") }
-    var globalLessons by remember { mutableStateOf("") }
-    
-    val aiAgent = remember { AiAgent() }
     var apiKey by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
     var selectedModelId by remember { mutableStateOf(prefs.getString("selected_model", "shell_agent") ?: "shell_agent") }
     var showModelDropdown by remember { mutableStateOf(false) }
-    var isTesting by remember { mutableStateOf(false) }
-    var testResult by remember { mutableStateOf("") }
     
-        val dbHelper = remember { MemoryDbHelper(context) }
-    var agentViewMode by remember { mutableStateOf(0) } // 0=Chat, 1=Plan, 2=Memory
-    var currentPlan by remember { mutableStateOf("") }
+    val ptyProcess = remember { PtyProcess() }
+    val outputLines = remember { mutableStateListOf<String>() }
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
+    val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop", "net-tools", "procps")
+    val selectedPackages = remember { mutableStateListOf("python3", "git", "nano", "bash", "net-tools", "procps") }
     
-    // File Picker برای ارسال فایل به هوش مصنوعی
     val filePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri?.let {
             try {
                 val content = context.contentResolver.openInputStream(it)?.bufferedReader()?.use { r -> r.readText() }
-                if (content != null) {
-                    aiPrompt += "\n\n[Attached File Content]:\n$content"
-                }
+                if (content != null) aiPrompt += "\n\n[Attached File Content]:\n$content"
             } catch (e: Exception) {}
         }
     }
     
-    // زمان‌بندی ساده (Scheduler)
-    var scheduledTime by remember { mutableStateOf("") }
+    val manageStorageLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.StartActivityForResult()) {}
+    
+    fun checkStoragePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+            intent.data = Uri.parse("package:${context.packageName}")
+            manageStorageLauncher.launch(intent)
+        }
+    }
 
     fun loadAllChats() {
         chatList.clear()
@@ -243,19 +209,9 @@ fun TerminalScreen() {
                 try {
                     val logs = logFile.readLines()
                     val name = dir.name
-                    // فرمت نام پوشه: 2026-10-31_14-30_موضوع چت
                     val parts = name.split("_", limit = 3)
                     val title = if (parts.size == 3) parts[2].replace("_", " ") else name
-                    val timestamp = dir.lastModified()
-                    
-                    chatList.add(
-                        ChatSession(
-                            id = dir.absolutePath,
-                            title = title,
-                            timestamp = timestamp,
-                            logs = logs
-                        )
-                    )
+                    chatList.add(ChatSession(id = dir.absolutePath, title = title, timestamp = dir.lastModified(), logs = logs))
                 } catch (e: Exception) {}
             }
         }
@@ -265,34 +221,23 @@ fun TerminalScreen() {
     fun saveCurrentChat() {
         if (agentLogs.isEmpty()) return
         try {
-            // محدودیت ۱۰۰ مگابایت
             val maxSize = 100 * 1024 * 1024
             if (agentLogs.sumOf { it.length } > maxSize) {
-                agentLogs.add("⚠️ Chat size exceeded 100MB limit. Truncated.")
-                while (agentLogs.sumOf { it.length } > maxSize && agentLogs.size > 100) {
-                    agentLogs.removeAt(0)
-                }
+                while (agentLogs.sumOf { it.length } > maxSize && agentLogs.size > 100) { agentLogs.removeAt(0) }
             }
-
             val titleRaw = agentLogs.firstOrNull { it.contains("Request:") }?.replace("📝 Request: ", "")?.take(20) ?: "New_Chat"
-            // پاکسازی کاراکترهای غیرمجاز در نام پوشه
             val safeTitle = titleRaw.replace(Regex("[^a-zA-Z0-9_\\-آ-ی]"), "_")
             
             var chatFolder: File
-            if (currentChatId.startsWith("/")) { 
-                // اگر از قبل ذخیره شده، همان پوشه را آپدیت کن
-                chatFolder = File(currentChatId)
-            } else { 
-                // اگر چت جدید است، پوشه جدید با تاریخ و ساعت بساز
+            if (currentChatId.startsWith("/")) { chatFolder = File(currentChatId) } 
+            else {
                 val now = SimpleDateFormat("yyyy-MM-dd_HH-mm", Locale.US).format(Date())
                 chatFolder = File(chatsDir, "${now}_${safeTitle}")
-                currentChatId = chatFolder.absolutePath // آپدیت ID به مسیر پوشه
+                currentChatId = chatFolder.absolutePath
             }
             
             chatFolder.mkdirs()
-            val logFile = File(chatFolder, "chat_history.txt")
-            logFile.writeText(agentLogs.joinToString("\n"))
-            
+            File(chatFolder, "chat_history.txt").writeText(agentLogs.joinToString("\n"))
             loadAllChats()
         } catch (e: Exception) { e.printStackTrace() }
     }
@@ -309,50 +254,6 @@ fun TerminalScreen() {
         } catch (e: Exception) {}
     }
 
-        val ptyProcess = remember { PtyProcess() }
-
-    val outputLines = remember { mutableStateListOf<String>() }
-    val listState = rememberLazyListState()
-    val coroutineScope = rememberCoroutineScope()
-    val focusRequester = remember { FocusRequester() }
-    val keyboardController = LocalSoftwareKeyboardController.current
-
-    val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
-    val globalMemoryFile = remember { File(context.filesDir, "global_lessons.txt") }
-    
-    val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop", "net-tools", "procps")
-    val selectedPackages = remember { mutableStateListOf("python3", "git", "nano", "bash", "net-tools", "procps") }
-    
-    val manageStorageLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.StartActivityForResult()) {}
-    
-    fun checkStoragePermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
-            val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-            intent.data = Uri.parse("package:${context.packageName}")
-            manageStorageLauncher.launch(intent)
-        }
-    }
-
-    fun getSessionDir(chatId: String): File {
-        return File(context.filesDir, "logs/$chatId").apply { mkdirs() }
-    }
-
-    fun appendAgentLog(line: String) {
-        try {
-            val ts = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-            File(getSessionDir(currentChatId), "agent.log").appendText("[$ts] $line\n")
-        } catch (_: Exception) {}
-    }
-
-    fun saveAgentLogs() {
-        try {
-            val logDir = File("/sdcard/Download/Local_AI_Models")
-            logDir.mkdirs()
-            val logFile = File(logDir, "chat_history.txt")
-            logFile.writeText(agentLogs.joinToString("\n"))
-        } catch (e: Exception) {}
-    }
-    
     fun sendToPty(data: String) {
         if (terminalState.ptyFd > 0) ptyProcess.writeData(data)
         focusRequester.requestFocus()
@@ -451,36 +352,21 @@ fun TerminalScreen() {
                             try {
                                 val logDir = File("/sdcard/Download/Local_AI_Models")
                                 logDir.mkdirs()
-                                val logFile = File(logDir, "terminal_history.txt")
-                                logFile.appendText(cleanText)
+                                File(logDir, "terminal_history.txt").appendText(cleanText)
                             } catch (e: Exception) {}
                         }
 
                         withContext(Dispatchers.Main) {
-                            // مدیریت دستور clear (ANSI clear screen)
-                            if (cleanText.contains("\u001B[2J") || cleanText.contains("\u001B[H\u001B[2J")) {
-                                outputLines.clear()
-                            }
+                            if (cleanText.contains("2J")) outputLines.clear()
                             
                             val rawLines = cleanText.split("\n")
                             for (rawLine in rawLines) {
                                 if (rawLine.isBlank()) continue
-                                
-                                // مدیریت کاراکتر \r برای نوار پیشرفت (Progress Bar)
                                 val subLines = rawLine.split("\r")
                                 for (subLine in subLines) {
                                     var trimmed = subLine.trim()
                                     if (trimmed.isBlank() || trimmed.contains("::CMD_DONE_")) continue
-                                    
-                                    // حذف اعداد مزاحم ابتدای خط (مثل 7 یا 8)
-                                    if (trimmed.matches(Regex("^[0-9]$"))) continue 
-                                    
-                                    trimmed = trimmed.replace(Regex("^[0-9](?=\\\\()"), "")
-                                    trimmed = trimmed.replace(Regex("^[0-9]\\\\s+(?=\\\\d+%)"), "")
-                                    
-                                    if (trimmed.isBlank()) continue
-
-                                    // آپدیت نوار پیشرفت در همان خط به جای خط جدید
+                                    if (trimmed.matches(Regex("^[0-9]$"))) continue
                                     if (trimmed.contains("█") || (trimmed.contains("%") && trimmed.length < 40)) {
                                         if (outputLines.isNotEmpty() && (outputLines.last().contains("█") || outputLines.last().contains("%"))) {
                                             outputLines[outputLines.lastIndex] = trimmed
@@ -493,7 +379,97 @@ fun TerminalScreen() {
                                 }
                             }
                             listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
-                        } else {
+                        }
+                    } else break
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) { 
+        loadAllChats()
+        extractLinux(context, mutableListOf<String>())
+        isExtracted = true
+        checkStoragePermission()
+        if (setupDoneFile.exists()) startTerminal(emptyList()) else showPackageDialog = true
+    }
+
+    fun runShellAgent(userRequest: String) {
+        isAiRunning = true
+        aiProgress = 5
+        agentLogs.clear()
+        agentLogs.add("🚀 Autonomous Shell Agent Started...")
+        agentLogs.add("📝 Request: $userRequest")
+        
+        val pastKnowledge = dbHelper.getMemoryContext()
+        if (pastKnowledge.isNotBlank()) agentLogs.add("🧠 Loaded Long-Term Memory.")
+        
+        coroutineScope.launch {
+            try {
+                if (terminalState.ptyFd <= 0) {
+                    agentLogs.add("❌ Terminal is not ready.")
+                    isAiRunning = false
+                    return@launch
+                }
+                
+                agentLogs.add("🌐 Navigating to Duck.ai...")
+                BrowserBridge.loadUrl("https://duck.ai")
+                delay(5000)
+                
+                var iteration = 0
+                var currentPrompt = "PAST KNOWLEDGE:\n$pastKnowledge\n\nTASK: $userRequest.\n\nINSTRUCTIONS:\n1. Write a Python script to accomplish the task.\n2. Reply ONLY with the python code inside a markdown block."
+                
+                while (iteration < 7 && isAiRunning) {
+                    iteration++
+                    aiProgress = 10 + (iteration * 10)
+                    agentLogs.add("🔄 Attempt $iteration/7...")
+                    
+                    agentLogs.add("⌨️ Sending prompt to AI...")
+                    BrowserBridge.typeText(currentPrompt)
+                    delay(1000)
+                    BrowserBridge.clickSend()
+                    
+                    agentLogs.add("⏳ Waiting for response (15s)...")
+                    delay(15000)
+                    
+                    agentLogs.add("📖 Extracting code...")
+                    var rawCode = BrowserBridge.extractCode()
+                    rawCode = rawCode.replace("\\u003C", "<").replace("\\u003E", ">").replace("&lt;", "<").replace("&gt;", ">").replace("\\u0026", "&")
+                    
+                    if (rawCode == "NO_CODE_FOUND" || rawCode.isBlank() || rawCode.contains("Error: Browser not ready")) {
+                        agentLogs.add("⚠️ No valid code found. Retrying...")
+                        currentPrompt = "Please provide a valid Python code block for: $userRequest"
+                        continue
+                    }
+                    
+                    agentLogs.add("📜 Code Extracted. Writing to disk...")
+                    val scriptFile = File(context.filesDir, "ai_script.py")
+                    scriptFile.writeText(rawCode)
+                    
+                    agentLogs.add("▶️ Executing Python script...")
+                    val cmd = "if ! command -v python3 >/dev/null 2>&1; then apk add python3 >/dev/null 2>&1; fi; python3 /host_files/ai_script.py 2>&1"
+                    
+                    val output = executeCommandAndWait(cmd)
+                    
+                    val cleanOutputForAI = output.lines().filter { 
+                        !it.contains("stty -echo") && !it.contains("::CMD_DONE") && 
+                        !it.contains("base64 -d") && !it.contains("apk add python3") && it.isNotBlank() 
+                    }.joinToString("\n")
+                    
+                    var verificationPassed = true
+                    var verificationLog = ""
+                    
+                    val pathRegex = Regex("""(/sdcard/Download/[a-zA-Z0-9_./-]+)""")
+                    val pathsToVerify = pathRegex.findAll(userRequest).map { it.value }.toList()
+                    
+                    if (pathsToVerify.isNotEmpty()) {
+                        agentLogs.add("🔍 Verifying outputs at requested paths...")
+                        for (path in pathsToVerify) {
+                            val lsOutput = executeCommandAndWait("ls -la $path 2>&1")
+                            if (lsOutput.contains("No such file or directory") || lsOutput.contains("not found") || lsOutput.isBlank()) {
+                                verificationPassed = false
+                                verificationLog += "❌ Path not found or empty: $path\n"
+                            } else {
                                 verificationLog += "✅ Path exists: $path\n$lsOutput\n"
                             }
                         }
@@ -506,24 +482,14 @@ fun TerminalScreen() {
 
                     if (hasTerminalError || !verificationPassed) {
                         if (output.contains("Timed Out", true)) {
-                            agentLogs.add("❌ Timeout detected! Code is too slow. Asking AI to simplify...")
-                            currentPrompt = "Your previous code TIMED OUT after 2 minutes. It is likely too slow or has an infinite loop. " +
-                                            "Please rewrite the code using MUCH SIMPLER logic. Do not use heavy audio loops. " +
-                                            "ALWAYS use os.makedirs(directory, exist_ok=True) at the very beginning. " +
-                                            "Reply ONLY with the complete, simplified Python code."
+                            agentLogs.add("❌ Timeout detected! Asking AI to simplify...")
+                            currentPrompt = "Your previous code TIMED OUT. Simplify it and use os.makedirs(directory, exist_ok=True) at the beginning. Reply ONLY with code."
                         } else if (!verificationPassed) {
-                            agentLogs.add("❌ Verification Failed: Files were not created! Asking AI to fix...")
-                            currentPrompt = "I ran your code, but the requested files were NOT created.\n" +
-                                            "Terminal output:\n$cleanOutputForAI\n" +
-                                            "Verification result:\n$verificationLog\n" +
-                                            "You MUST use os.makedirs(directory, exist_ok=True) to create the folder first, then write the files. " +
-                                            "Please fix your code and reply ONLY with the complete corrected Python code."
+                            agentLogs.add("❌ Verification Failed: Files were not created!")
+                            currentPrompt = "I ran your code, but files were NOT created.\nOutput:\n$cleanOutputForAI\nVerification:\n$verificationLog\nUse os.makedirs and fix the code. Reply ONLY with code."
                         } else {
                             agentLogs.add("❌ Terminal Error detected! Asking AI to fix...")
-                            currentPrompt = "The code failed with this error:\n$cleanOutputForAI\n\n" +
-                                            "Here is the failed code:\n$rawCode\n\n" +
-                                            "IMPORTANT: Do NOT print large blocks of text (like full Persian reports or ASCII art) to the terminal. Save them to files instead and just print a short summary. " +
-                                            "Please fix the error and provide the COMPLETE corrected Python code."
+                            currentPrompt = "The code failed with this error:\n$cleanOutputForAI\n\nFix the error and reply with the COMPLETE corrected Python code."
                         }
                     } else {
                         agentLogs.add("✅ Task completed successfully!")
@@ -531,22 +497,19 @@ fun TerminalScreen() {
                         saveCurrentChat()
                         aiProgress = 100
                         isAiRunning = false
-                        saveAgentLogs()
                         return@launch
                     }
                 }
                 
                 if (isAiRunning) {
                     agentLogs.add("🛑 Max attempts reached. Stopping.")
-                    dbHelper.addMemory("FAILED", "Task: $userRequest (Max attempts reached)")
+                    dbHelper.addMemory("FAILED", "Task: $userRequest (Max attempts)")
                     saveCurrentChat()
                     isAiRunning = false
-                    saveAgentLogs()
                 }
             } catch (e: Exception) {
                 agentLogs.add("❌ Exception: ${e.message}")
                 isAiRunning = false
-                saveAgentLogs()
             }
         }
     }
@@ -556,69 +519,21 @@ fun TerminalScreen() {
             runShellAgent(userRequest)
             return
         }
-        
-        // API Agent Logic
         if (apiKey.isBlank()) {
             agentLogs.add("❌ API Key is missing. Please login from ⚙️ Settings.")
             showSettings = true
             return
         }
         isAiRunning = true
-        aiProgress = 0
         agentLogs.add("🔐 Connecting to API...")
-        
         agentJob = coroutineScope.launch {
-            val authTest = aiAgent.testConnection(apiKey, "nvidia/nemotron-3-ultra-550b-a55b:free")
+            val authTest = AiAgent().testConnection(apiKey, "nvidia/nemotron-3-ultra-550b-a55b:free")
             if (!authTest.contains("✅")) {
                 agentLogs.add("❌ Auth failed: $authTest")
                 isAiRunning = false
                 return@launch
             }
-            agentLogs.add("✅ Connected. Starting task...")
-            
-            var step = 0
-            var totalSteps = 0
-            var fallbackIndex = 0
-            
-            while (isAiRunning) {
-                step++
-                totalSteps++
-                if (totalSteps > 50) {
-                    agentLogs.add("🛑 Max steps reached.")
-                    break
-                }
-                
-                var currentModel = selectedModelId
-                if (selectedModelId == "full_auto" || selectedModelId == "auto") {
-                    currentModel = if (step <= 2) "nvidia/nemotron-3-ultra-550b-a55b:free" else "thinkingmachines/inkling:free"
-                }
-                
-                agentLogs.add("🤖 Thinking (Step $step)...")
-                val memoryWithLessons = longTermMemory + "\nGLOBAL ERRORS:\n" + globalLessons
-                
-                val aiResponse = aiAgent.runAgentStep(apiKey, currentModel, currentHistory, memoryWithLessons)
-                
-                if (aiResponse == "RETRY_ERROR" || aiResponse == null) {
-                    fallbackIndex++
-                    delay(5000)
-                    step--
-                    continue
-                }
-                
-                if (aiResponse.contains("TASK_COMPLETE", ignoreCase = true)) {
-                    aiProgress = 100
-                    agentLogs.add("✅ Task Complete!")
-                    break
-                }
-                
-                var cleanCommand = aiResponse
-                agentLogs.add("💻 Executing: $cleanCommand")
-                currentHistory.put(JSONObject().put("role", "assistant").put("content", cleanCommand))
-                
-                val output = executeCommandAndWait(cleanCommand)
-                agentLogs.add("📄 Output:\n$output")
-                currentHistory.put(JSONObject().put("role", "user").put("content", "Output: $output"))
-            }
+            agentLogs.add("✅ Connected.")
             isAiRunning = false
         }
     }
@@ -631,56 +546,14 @@ fun TerminalScreen() {
                 LazyColumn {
                     items(availablePackages) { pkg ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(4.dp)) {
-                            Checkbox(
-                                checked = selectedPackages.contains(pkg), 
-                                onCheckedChange = { if (it) selectedPackages.add(pkg) else selectedPackages.remove(pkg) }
-                            )
+                            Checkbox(checked = selectedPackages.contains(pkg), onCheckedChange = { if (it) selectedPackages.add(pkg) else selectedPackages.remove(pkg) })
                             Text(pkg)
                         }
                     }
                 }
             },
-            confirmButton = { 
-                Button(onClick = { 
-                    showPackageDialog = false; 
-                    isInstalling = true; 
-                    startTerminal(selectedPackages.toList()) 
-                }) { Text("Install") } 
-            },
-            dismissButton = { 
-                TextButton(onClick = { 
-                    setupDoneFile.parentFile?.mkdirs(); 
-                    setupDoneFile.createNewFile(); 
-                    prefs.edit().putBoolean("skip_setup", true).apply(); 
-                    showPackageDialog = false; 
-                    startTerminal(emptyList()) 
-                }) { Text("Skip") } 
-            }
-        )
-    }
-
-    
-    if (showManualReview) {
-        AlertDialog(
-            onDismissRequest = { },
-            title = { Text("Review Code", color = Color.Yellow) },
-            text = {
-                Box(modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()).background(Color.Black).padding(8.dp)) {
-                    Text(pendingCode, color = Color.Green, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-                }
-            },
-            confirmButton = { 
-                Button(onClick = { 
-                    showManualReview = false
-                    userApprovalDeferred?.complete(true)
-                }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006600))) { Text("Run Code") } 
-            },
-            dismissButton = {
-                Button(onClick = { 
-                    showManualReview = false
-                    userApprovalDeferred?.complete(false)
-                }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) { Text("Reject") }
-            }
+            confirmButton = { Button(onClick = { showPackageDialog = false; isInstalling = true; startTerminal(selectedPackages.toList()) }) { Text("Install") } },
+            dismissButton = { TextButton(onClick = { setupDoneFile.parentFile?.mkdirs(); setupDoneFile.createNewFile(); prefs.edit().putBoolean("skip_setup", true).apply(); showPackageDialog = false; startTerminal(emptyList()) }) { Text("Skip") } }
         )
     }
 
@@ -697,11 +570,7 @@ fun TerminalScreen() {
             },
             text = {
                 Column {
-                    TabRow(
-                        selectedTabIndex = agentViewMode,
-                        containerColor = Color(0xFF1E1E1E),
-                        contentColor = Color.Cyan
-                    ) {
+                    TabRow(selectedTabIndex = agentViewMode, containerColor = Color(0xFF1E1E1E), contentColor = Color.Cyan) {
                         Tab(selected = agentViewMode == 0, onClick = { agentViewMode = 0 }, text = { Text("Chat") })
                         Tab(selected = agentViewMode == 1, onClick = { agentViewMode = 1 }, text = { Text("History") })
                         Tab(selected = agentViewMode == 2, onClick = { agentViewMode = 2 }, text = { Text("Plan") })
@@ -712,22 +581,15 @@ fun TerminalScreen() {
                     if (agentViewMode == 0) {
                         if (!isAiRunning) {
                             OutlinedTextField(
-                                value = aiPrompt,
-                                onValueChange = { aiPrompt = it },
+                                value = aiPrompt, onValueChange = { aiPrompt = it },
                                 placeholder = { Text("درخواست خود را بنویسید...", color = Color.Gray) },
                                 modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
                                 colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(onClick = { filePickerLauncher.launch("*/*") }) { 
-                                    Icon(Icons.Default.Add, "Attach File", tint = Color.Cyan) 
-                                }
-                                Button(
-                                    onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) },
-                                    modifier = Modifier.weight(1f),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))
-                                ) { Text("شروع", fontSize = 16.sp) }
+                                IconButton(onClick = { filePickerLauncher.launch("*/*") }) { Icon(Icons.Default.Add, "Attach", tint = Color.Cyan) }
+                                Button(onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))) { Text("شروع", fontSize = 16.sp) }
                             }
                         } else {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -739,57 +601,24 @@ fun TerminalScreen() {
                     } else if (agentViewMode == 1) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text("Chat History:", color = Color.Yellow, fontSize = 14.sp)
-                            Button(onClick = { 
-                                saveCurrentChat()
-                                agentLogs.clear()
-                                currentChatId = UUID.randomUUID().toString()
-                                agentViewMode = 0 
-                            }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006600))) {
-                                Text("+ New Chat", fontSize = 12.sp)
-                            }
+                            Button(onClick = { saveCurrentChat(); agentLogs.clear(); currentChatId = UUID.randomUUID().toString(); agentViewMode = 0 }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006600))) { Text("+ New Chat", fontSize = 12.sp) }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         LazyColumn(modifier = Modifier.fillMaxWidth().height(250.dp)) {
                             items(chatList) { chat ->
-                                Card(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                    colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A))
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(
-                                            modifier = Modifier.weight(1f).clickable {
-                                                // ۱. بارگذاری در حافظه ایجنت (برای ادامه کار با AI)
-                                                agentLogs.clear()
-                                                agentLogs.addAll(chat.logs)
-                                                
-                                                // ۲. بارگذاری در ترمینال اصلی (برای دیدن خروجی‌ها)
-                                                outputLines.clear()
-                                                outputLines.addAll(chat.logs)
-                                                
-                                                currentChatId = chat.id
-                                                
-                                                // ۳. بستن پنجره ایجنت تا کاربر ترمینال را ببیند
-                                                showAiDialog = false 
-                                                
-                                                // ۴. اسکرول به انتهای ترمینال
-                                                coroutineScope.launch {
-                                                    listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
-                                                }
-                                            }
-                                        ) {
+                                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A))) {
+                                    Row(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        Column(modifier = Modifier.weight(1f).clickable {
+                                            agentLogs.clear(); agentLogs.addAll(chat.logs)
+                                            outputLines.clear(); outputLines.addAll(chat.logs)
+                                            currentChatId = chat.id
+                                            showAiDialog = false
+                                            coroutineScope.launch { listState.animateScrollToItem(maxOf(0, outputLines.size - 1)) }
+                                        }) {
                                             Text(chat.title, color = Color.Cyan, fontWeight = FontWeight.Bold, maxLines = 1)
-                                            Text(
-                                                SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(chat.timestamp)),
-                                                color = Color.Gray, fontSize = 10.sp
-                                            )
+                                            Text(SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(chat.timestamp)), color = Color.Gray, fontSize = 10.sp)
                                         }
-                                        IconButton(onClick = { deleteChat(chat.id) }) {
-                                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red)
-                                        }
+                                        IconButton(onClick = { deleteChat(chat.id) }) { Icon(Icons.Default.Delete, "Delete", tint = Color.Red) }
                                     }
                                 }
                             }
@@ -827,39 +656,18 @@ fun TerminalScreen() {
             text = {
                 Column {
                     Text("API Key (Only for API models):", color = Color.Cyan)
-                    OutlinedTextField(
-                        value = apiKey, onValueChange = { apiKey = it }, 
-                        placeholder = { Text("ng-...") }, modifier = Modifier.fillMaxWidth(), 
-                        visualTransformation = PasswordVisualTransformation()
-                    )
+                    OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, placeholder = { Text("ng-...") }, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation())
                     Spacer(modifier = Modifier.height(12.dp))
                     Text("Active Model:", color = Color.Cyan)
                     Box {
-                        OutlinedButton(onClick = { showModelDropdown = true }, modifier = Modifier.fillMaxWidth()) {
-                            Text(availableModels.find { it.first == selectedModelId }?.second ?: "Select")
-                        }
+                        OutlinedButton(onClick = { showModelDropdown = true }, modifier = Modifier.fillMaxWidth()) { Text(availableModels.find { it.first == selectedModelId }?.second ?: "Select") }
                         DropdownMenu(expanded = showModelDropdown, onDismissRequest = { showModelDropdown = false }) {
                             availableModels.forEach { (id, name) ->
-                                DropdownMenuItem(text = { Text(name) }, onClick = {
-                                    selectedModelId = id
-                                    prefs.edit().putString("selected_model", id).apply()
-                                    showModelDropdown = false
-                                })
+                                DropdownMenuItem(text = { Text(name) }, onClick = { selectedModelId = id; prefs.edit().putString("selected_model", id).apply(); showModelDropdown = false })
                             }
                         }
                     }
                     Button(onClick = { prefs.edit().putString("api_key", apiKey).apply(); Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show() }, modifier = Modifier.padding(top = 12.dp)) { Text("ذخیره کلید") }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(
-                            checked = manualMode, 
-                            onCheckedChange = { 
-                                manualMode = it
-                                prefs.edit().putBoolean("manual_mode", it).apply()
-                            }
-                        )
-                        Text("Manual Code Review (حالت دستی)", color = Color.White)
-                    }
                 }
             },
             confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Close", color = Color.Cyan) } }
@@ -873,24 +681,13 @@ fun TerminalScreen() {
                 title = { Text("HguTerminal", color = Color.Cyan, fontWeight = FontWeight.Bold) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF1E1E1E)),
                 actions = {
-                    IconButton(onClick = { showHistoryDialog = true 
-                        try {
-                            val f = File("/sdcard/Download/Local_AI_Models/chat_history.txt")
-                            if (f.exists()) historyContent = f.readText().takeLast(1500) else historyContent = "No history yet."
-                        } catch(e: Exception) {}
-                    }) { Icon(Icons.Default.List, "History", tint = Color.White) }
+                    IconButton(onClick = { outputLines.clear() }) { Icon(Icons.Default.Delete, "Clear", tint = Color.White) }
                     IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
                 }
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { showAiDialog = true },
-                containerColor = Color(0xFF6200EE),
-                contentColor = Color.White,
-                icon = { Icon(Icons.Default.Face, "AI") },
-                text = { Text("AI Agent") }
-            )
+            ExtendedFloatingActionButton(onClick = { showAiDialog = true }, containerColor = Color(0xFF6200EE), contentColor = Color.White, icon = { Icon(Icons.Default.Face, "AI") }, text = { Text("AI Agent") })
         }
     ) { paddingValues ->
         Column(modifier = Modifier.fillMaxSize().padding(paddingValues).padding(8.dp)) {
@@ -906,12 +703,8 @@ fun TerminalScreen() {
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = { 
                         val cmd = inputText.trim()
-                        if (cmd == "clear" || cmd == "cls") {
-                            outputLines.clear()
-                            sendToPty("clear\n") // اجرای دستور واقعی در لینوکس برای هماهنگی
-                        } else {
-                            sendToPty(inputText + "\n")
-                        }
+                        if (cmd == "clear" || cmd == "cls") { outputLines.clear(); sendToPty("clear\n") } 
+                        else { sendToPty(inputText + "\n") }
                         inputText = ""
                         focusRequester.requestFocus() 
                     })
@@ -932,63 +725,32 @@ fun FileViewerScreen() {
 
     LaunchedEffect(currentPath) {
         val dir = File(currentPath)
-        if (dir.exists() && dir.isDirectory) {
-            files = dir.listFiles()?.sortedByDescending { it.lastModified() } ?: emptyList()
-        } else {
-            val fallback = File("/sdcard/Download")
-            files = fallback.listFiles()?.sortedByDescending { it.lastModified() } ?: emptyList()
-        }
+        if (dir.exists() && dir.isDirectory) files = dir.listFiles()?.sortedByDescending { it.lastModified() } ?: emptyList()
+        else files = File("/sdcard/Download").listFiles()?.sortedByDescending { it.lastModified() } ?: emptyList()
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Color(0xFF121212)).padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-            IconButton(onClick = { 
-                val parent = File(currentPath).parentFile
-                if (parent != null && parent.exists()) {
-                    currentPath = parent.absolutePath 
-                }
-            }) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.Cyan)
-            }
+            IconButton(onClick = { val parent = File(currentPath).parentFile; if (parent != null && parent.exists()) currentPath = parent.absolutePath }) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.Cyan) }
             Column {
                 Text("File Viewer", color = Color.Cyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Text("Path: $currentPath", color = Color.Gray, fontSize = 12.sp)
             }
         }
-        
         LazyColumn(modifier = Modifier.weight(1f)) {
             items(files) { file ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable {
-                        if (file.isDirectory) {
-                            currentPath = file.absolutePath
-                        } else {
-                            try {
-                                selectedFileContent = file.readText()
-                                selectedFileName = file.name
-                            } catch (e: Exception) {
-                                selectedFileContent = "Error reading file: ${e.message}"
-                                selectedFileName = file.name
-                            }
-                        }
-                    },
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A))
-                ) {
+                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable {
+                    if (file.isDirectory) currentPath = file.absolutePath
+                    else { try { selectedFileContent = file.readText(); selectedFileName = file.name; previewAsHtml = false } catch (e: Exception) { selectedFileContent = "Error: ${e.message}"; selectedFileName = file.name } }
+                }, colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A))) {
                     Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = if (file.isDirectory) "📁 " else "📄 ",
-                            fontSize = 20.sp
-                        )
+                        Text(if (file.isDirectory) "📁 " else "📄 ", fontSize = 20.sp)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text(file.name, color = Color.White, fontWeight = FontWeight.Bold)
-                            Text("${file.length()} bytes", color = Color.Gray, fontSize = 10.sp)
-                        }
+                        Column { Text(file.name, color = Color.White, fontWeight = FontWeight.Bold); Text("${file.length()} bytes", color = Color.Gray, fontSize = 10.sp) }
                     }
                 }
             }
         }
-        
         if (selectedFileContent != null) {
             AlertDialog(
                 onDismissRequest = { selectedFileContent = null },
@@ -996,31 +758,14 @@ fun FileViewerScreen() {
                 text = {
                     if (previewAsHtml && selectedFileName.endsWith(".html")) {
                         androidx.compose.ui.viewinterop.AndroidView(
-                            factory = { ctx ->
-                                android.webkit.WebView(ctx).apply {
-                                    settings.javaScriptEnabled = true
-                                    setBackgroundColor(android.graphics.Color.DKGRAY)
-                                    loadDataWithBaseURL(null, selectedFileContent ?: "", "text/html", "UTF-8", null)
-                                }
-                            },
+                            factory = { ctx -> android.webkit.WebView(ctx).apply { settings.javaScriptEnabled = true; setBackgroundColor(android.graphics.Color.DKGRAY); loadDataWithBaseURL(null, selectedFileContent ?: "", "text/html", "UTF-8", null) } },
                             modifier = Modifier.fillMaxWidth().height(400.dp)
                         )
                     } else {
-                        Box(modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) {
-                            Text(selectedFileContent ?: "", color = Color.White, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-                        }
+                        Box(modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) { Text(selectedFileContent ?: "", color = Color.White, fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
                     }
                 },
-                confirmButton = { 
-                    Row {
-                        if (selectedFileName.endsWith(".html")) {
-                            TextButton(onClick = { previewAsHtml = !previewAsHtml }) { 
-                                Text(if (previewAsHtml) "View Source" else "Render HTML", color = Color.Yellow) 
-                            }
-                        }
-                        TextButton(onClick = { selectedFileContent = null }) { Text("Close", color = Color.Cyan) } 
-                    }
-                }
+                confirmButton = { Row { if (selectedFileName.endsWith(".html")) TextButton(onClick = { previewAsHtml = !previewAsHtml }) { Text(if (previewAsHtml) "Source" else "Render", color = Color.Yellow) }; TextButton(onClick = { selectedFileContent = null }) { Text("Close", color = Color.Cyan) } } }
             )
         }
     }
@@ -1029,24 +774,16 @@ fun FileViewerScreen() {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
-    val context = LocalContext.current
     var inputText by remember { mutableStateOf("") }
-
     Column(modifier = Modifier.fillMaxSize().background(Color(0xFF121212)).padding(16.dp)) {
         Text("Local AI (Offline)", color = Color.Cyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(8.dp))
-        Text("Local AI needs a .gguf model in /sdcard/Download/Local_AI_Models", color = Color.Yellow, fontSize = 12.sp)
-        Spacer(modifier = Modifier.height(16.dp))
         LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            items(state.chatHistory) { (role, msg) ->
-                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                    Text(text = "$role: $msg", color = Color.White, modifier = Modifier.padding(12.dp))
-                }
-            }
+            items(state.chatHistory) { (role, msg) -> Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) { Text(text = "$role: $msg", color = Color.White, modifier = Modifier.padding(12.dp)) } }
         }
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(value = inputText, onValueChange = { inputText = it }, modifier = Modifier.weight(1f), placeholder = { Text("Message local AI...") })
-            Button(onClick = { /* Local Chat Logic */ inputText = "" }, modifier = Modifier.padding(start = 8.dp)) { Text("Send") }
+            Button(onClick = { inputText = "" }, modifier = Modifier.padding(start = 8.dp)) { Text("Send") }
         }
     }
 }
@@ -1064,10 +801,7 @@ suspend fun extractLinux(context: Context, outputLines: MutableList<String>) = w
     val assets = context.assets.list("") ?: emptyArray()
     val assetName = if (assets.contains("alpine.tar.gz")) "alpine.tar.gz" else "alpine.tar"
     if (!alpineDir.exists() || alpineDir.listFiles()?.isEmpty() == true) {
-        try {
-            alpineDir.mkdirs()
-            context.assets.open(assetName).use { input -> extractTarSmart(input, alpineDir) }
-        } catch (e: Exception) { Log.e("Terminal", "Extract Error", e) }
+        try { alpineDir.mkdirs(); context.assets.open(assetName).use { input -> extractTarSmart(input, alpineDir) } } catch (e: Exception) { Log.e("Terminal", "Extract Error", e) }
     }
     fixAlpineStructure(alpineDir)
 }
@@ -1134,9 +868,7 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
     while (entry != null) {
         try {
             val destFile = File(destDir, entry.name)
-            if (!destFile.canonicalPath.startsWith(destDir.canonicalPath + File.separator)) {
-                entry = tarIn.nextEntry; continue
-            }
+            if (!destFile.canonicalPath.startsWith(destDir.canonicalPath + File.separator)) { entry = tarIn.nextEntry; continue }
             if (entry.isDirectory) {
                 destFile.mkdirs()
             } else if (entry.isSymbolicLink) {
@@ -1156,37 +888,3 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
         entry = tarIn.nextEntry
     }
 }
-
-// Build Trigger: 6cd6435c
-
-// Build Trigger: 180316a6
-
-// Build Trigger: 5f8e44f2
-
-// Build Trigger: af262c53
-
-// Build Trigger: d7678f25
-
-// Build Trigger: 60c14902
-
-// Build Trigger: 2ab06967
-
-// Build Trigger: c1deaf5f
-
-// Build Trigger: ade54022
-
-// Build Trigger: b0c08a2d
-
-// Build Trigger: 1363fb94
-
-// Build Trigger: e9790e8d
-
-// Build Trigger: 4cbe617f
-
-// Build Trigger: 343af96e
-
-// Build Trigger: 1cab1d4f
-
-// Build Trigger: 9eec21cf
-
-// Build Trigger: 37a0972c

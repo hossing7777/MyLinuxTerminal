@@ -21,6 +21,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -149,7 +151,8 @@ fun TerminalScreen() {
     var isInstalling by remember { mutableStateOf(false) }
 
     var inputText by remember { mutableStateOf("") }
-    var fontSize by remember { mutableStateOf(14.sp) }
+    var fontSizeFloat by remember { mutableStateOf(14f) }
+    val fontSize = fontSizeFloat.sp
     var textColor by remember { mutableStateOf(Color(0xFF00FF00)) }
     var bgColor by remember { mutableStateOf(Color(0xFF121212)) }
     var showSettings by remember { mutableStateOf(false) }
@@ -682,6 +685,12 @@ fun TerminalScreen() {
                 title = { Text("HguTerminal", color = Color.Cyan, fontWeight = FontWeight.Bold) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF1E1E1E)),
                 actions = {
+                    IconButton(onClick = { 
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = ClipData.newPlainText("Terminal", outputLines.joinToString("\n"))
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(context, "Copied!", Toast.LENGTH_SHORT).show()
+                    }) { Icon(Icons.Default.Share, "Copy All", tint = Color.White) }
                     IconButton(onClick = { outputLines.clear() }) { Icon(Icons.Default.Delete, "Clear", tint = Color.White) }
                     IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
                 }
@@ -692,8 +701,21 @@ fun TerminalScreen() {
         }
     ) { paddingValues ->
         Column(modifier = Modifier.fillMaxSize().padding(paddingValues).padding(8.dp)) {
-            LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
-                items(outputLines) { line -> SelectionContainer { Text(text = line, color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize) } }
+            LazyColumn(
+                state = listState, 
+                modifier = Modifier
+                    .weight(1f)
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, _, zoom, _ ->
+                            fontSizeFloat = (fontSizeFloat * zoom).coerceIn(8f, 30f)
+                        }
+                    }
+            ) {
+                items(outputLines) { line -> 
+                    SelectionContainer { 
+                        Text(text = line, color = textColor, fontFamily = FontFamily.Monospace, fontSize = fontSize) 
+                    } 
+                }
             }
             Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(text = "$ ", color = Color.Cyan, fontFamily = FontFamily.Monospace, fontSize = fontSize, fontWeight = FontWeight.Bold)
@@ -891,3 +913,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 }
 
 // Build Trigger: 57467c62
+
+// Build Trigger: b9436513

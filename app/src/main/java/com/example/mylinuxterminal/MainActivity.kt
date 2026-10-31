@@ -197,6 +197,16 @@ fun TerminalScreen() {
     var currentHistory by remember { mutableStateOf(JSONArray()) }
     val chatList = remember { mutableStateListOf<ChatSession>() }
     val agentLogs = remember { mutableStateListOf<String>() }
+
+    fun saveAgentLogs() {
+        try {
+            val logDir = File("/sdcard/Download/Local_AI_Models")
+            logDir.mkdirs()
+            val logFile = File(logDir, "chat_history.txt")
+            logFile.writeText(agentLogs.joinToString("\n"))
+        } catch (e: Exception) {}
+    }
+
     
     var longTermMemory by remember { mutableStateOf(prefs.getString("lt_memory", "No successful commands yet.") ?: "") }
     var globalLessons by remember { mutableStateOf("") }
@@ -344,6 +354,14 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
                             }
                         }
 
+                        withContext(Dispatchers.IO) {
+                            try {
+                                val logDir = File("/sdcard/Download/Local_AI_Models")
+                                logDir.mkdirs()
+                                val logFile = File(logDir, "terminal_history.txt")
+                                logFile.appendText(cleanText)
+                            } catch (e: Exception) {}
+                        }
                         withContext(Dispatchers.Main) {
                             val lines = cleanText.split("\n")
                             for (line in lines) {
@@ -357,6 +375,20 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
                 }
             }
         }
+    }
+
+    
+    LaunchedEffect(Unit) {
+        try {
+            val logFile = File("/sdcard/Download/Local_AI_Models/chat_history.txt")
+            if (logFile.exists()) {
+                val history = logFile.readText()
+                if (history.isNotBlank()) {
+                    agentLogs.add("--- بارگذاری تاریخچه ---")
+                    agentLogs.addAll(history.split("\n").takeLast(20))
+                }
+            }
+        } catch (e: Exception) {}
     }
 
     LaunchedEffect(Unit) { 
@@ -407,7 +439,8 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
                     delay(15000)
                     
                     agentLogs.add("📖 Extracting code...")
-                    val rawCode = BrowserBridge.extractCode()
+                    var rawCode = BrowserBridge.extractCode()
+                    rawCode = rawCode.replace("\\u003C", "<").replace("\\u003E", ">").replace("&lt;", "<").replace("&gt;", ">").replace("\\u0026", "&")
                     
                     if (rawCode == "NO_CODE_FOUND" || rawCode.isBlank() || rawCode.contains("Error: Browser not ready")) {
                         agentLogs.add("⚠️ No code found. Retrying...")
@@ -434,6 +467,7 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
                         currentPrompt = "The code failed with this error:\n$output\n\nPlease fix it and provide the complete python code."
                     } else {
                         agentLogs.add("✅ Task completed successfully!")
+                        saveAgentLogs()
                         aiProgress = 100
                         isAiRunning = false
                         return@launch
@@ -594,7 +628,10 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
                         }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text("گزارش زنده:", color = Color.LightGray, fontSize = 12.sp)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("گزارش زنده:", color = Color.LightGray, fontSize = 12.sp)
+                        TextButton(onClick = { agentLogs.clear() }) { Text("پاک کردن", color = Color.Red, fontSize = 12.sp) }
+                    }
                     LazyColumn(modifier = Modifier.height(200.dp).fillMaxWidth().background(Color.Black, RoundedCornerShape(8.dp)).padding(8.dp)) {
                         items(agentLogs) { log -> Text(log, color = Color(0xFF00FF00), fontSize = 11.sp, fontFamily = FontFamily.Monospace) }
                     }

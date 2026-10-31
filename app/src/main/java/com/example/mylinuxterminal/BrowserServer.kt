@@ -47,6 +47,9 @@ object BrowserServer {
                     "source" -> BrowserBridge.getPageSource()
                     "click" -> BrowserBridge.clickElement(arg)
                     "eval" -> BrowserBridge.evaluateJs(arg)
+                    "type" -> BrowserBridge.typeText(arg)
+                    "send" -> BrowserBridge.clickSend()
+                    "extract_code" -> BrowserBridge.extractCode()
                     "sleep" -> {
                         val ms = arg.toLongOrNull() ?: 3000L
                         kotlinx.coroutines.delay(ms)

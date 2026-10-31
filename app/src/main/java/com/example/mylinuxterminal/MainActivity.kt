@@ -846,10 +846,23 @@ fun TerminalScreen() {
                                     ) {
                                         Column(
                                             modifier = Modifier.weight(1f).clickable {
+                                                // ۱. بارگذاری در حافظه ایجنت (برای ادامه کار با AI)
                                                 agentLogs.clear()
                                                 agentLogs.addAll(chat.logs)
+                                                
+                                                // ۲. بارگذاری در ترمینال اصلی (برای دیدن خروجی‌ها)
+                                                outputLines.clear()
+                                                outputLines.addAll(chat.logs)
+                                                
                                                 currentChatId = chat.id
-                                                agentViewMode = 0 // رفتن به تب چت
+                                                
+                                                // ۳. بستن پنجره ایجنت تا کاربر ترمینال را ببیند
+                                                showAiDialog = false 
+                                                
+                                                // ۴. اسکرول به انتهای ترمینال
+                                                coroutineScope.launch {
+                                                    listState.animateScrollToItem(maxOf(0, outputLines.size - 1))
+                                                }
                                             }
                                         ) {
                                             Text(chat.title, color = Color.Cyan, fontWeight = FontWeight.Bold, maxLines = 1)
@@ -1257,3 +1270,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 // Build Trigger: 343af96e
 
 // Build Trigger: 1cab1d4f
+
+// Build Trigger: 9eec21cf

@@ -42,9 +42,11 @@ class AiAgent {
                This way, the system checks the cache first and only downloads if missing.
             7. COMPLETION: When done, reply ONLY with: TASK_COMPLETE
 
-            HARDWARE CONTROLS (CRITICAL RULE):
+            HARDWARE CONTROLS (CRITICAL RULE - NEVER BREAK THIS):
+            The environment is a PRoot Alpine Linux WITHOUT Termux API. 
+            DO NOT USE `termux-brightness`, `termux-vibrate`, `termux-volume`, or any termux-api commands. They will fail.
             If the user asks to change device settings (brightness, volume, vibrate, wifi, bluetooth, speak), 
-            you MUST output ONLY the hardware tag. DO NOT output any Python code. DO NOT explain.
+            you MUST output ONLY the exact hardware tag. DO NOT output any Python code. DO NOT output bash. DO NOT explain.
             Format: [HARDWARE] action arg [/HARDWARE]
             Available actions:
             - brightness <1-255> (e.g. [HARDWARE] brightness 30 [/HARDWARE])
@@ -53,6 +55,7 @@ class AiAgent {
             - wifi_on / wifi_off
             - bt_on / bt_off
             - speak <text> (e.g. [HARDWARE] speak Hello World [/HARDWARE])
+
 
             BROWSER AUTOMATION AGENT (SUPER IMPORTANT):        """.trimIndent()
     }

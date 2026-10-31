@@ -169,6 +169,15 @@ fun TerminalScreen() {
     val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop", "net-tools", "procps")
     val selectedPackages = remember { mutableStateListOf("python3", "git", "nano", "bash", "net-tools", "procps") }
     
+    val speechLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val spokenText = result.data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+            if (spokenText != null) {
+                aiPrompt += " $spokenText"
+            }
+        }
+    }
+    
     val filePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri?.let {
             try {
@@ -601,6 +610,13 @@ fun TerminalScreen() {
                             Spacer(modifier = Modifier.height(16.dp))
                             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(onClick = { filePickerLauncher.launch("*/*") }) { Icon(Icons.Default.Add, "Attach", tint = Color.Cyan) }
+                                IconButton(onClick = { 
+                                    try {
+                                        speechLauncher.launch(HardwareBridge.getSpeechIntent())
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "Speech recognition not available", Toast.LENGTH_SHORT).show()
+                                    }
+                                }) { Icon(Icons.Default.Mic, "Speak", tint = Color.Cyan) }
                                 Button(onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))) { Text("شروع", fontSize = 16.sp) }
                             }
                         } else {
@@ -931,3 +947,5 @@ fun extractEntries(tarIn: TarArchiveInputStream, destDir: File) {
 }
 
 // Build Trigger: 37d83d6b
+
+// Build Trigger: 7b206856

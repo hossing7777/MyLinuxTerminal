@@ -149,6 +149,12 @@ fun MainScreen() {
                     icon = { Icon(Icons.Default.Search, contentDescription = "Browser", tint = Color.Cyan) },
                     label = { Text("Browser", color = Color.Cyan) }
                 )
+                NavigationBarItem(
+                    selected = selectedTab == 3,
+                    onClick = { selectedTab = 3 },
+                    icon = { Icon(Icons.Default.List, contentDescription = "Files", tint = Color.Cyan) },
+                    label = { Text("Files", color = Color.Cyan) }
+                )
             }
         }
     ) { paddingValues ->
@@ -162,6 +168,9 @@ fun MainScreen() {
                 }
                 Box(modifier = Modifier.fillMaxSize().zIndex(if (selectedTab == 2) 1f else 0f)) {
                     BrowserScreen()
+                }
+                Box(modifier = Modifier.fillMaxSize().zIndex(if (selectedTab == 3) 1f else 0f)) {
+                    FileViewerScreen()
                 }
             }
         }
@@ -425,7 +434,7 @@ val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
                 var iteration = 0
                 var currentPrompt = "$userRequest. Reply ONLY with the python code inside a markdown block."
                 
-                while (iteration < 5 && isAiRunning) {
+                while (iteration < 7 && isAiRunning) {
                     iteration++
                     aiProgress = 10 + (iteration * 15)
                     agentLogs.add("🔄 Attempt $iteration/5...")
@@ -742,6 +751,77 @@ fun LocalAIScreen(state: LocalAIState, scope: CoroutineScope) {
 }
 
 // 👇 Helpers 👇
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FileViewerScreen() {
+    var files by remember { mutableStateOf(listOf<File>()) }
+    var selectedFileContent by remember { mutableStateOf<String?>(null) }
+    var selectedFileName by remember { mutableStateOf("") }
+    var currentPath by remember { mutableStateOf("/sdcard/Download/Agent_Project") }
+
+    LaunchedEffect(currentPath) {
+        val dir = File(currentPath)
+        if (dir.exists() && dir.isDirectory) {
+            files = dir.listFiles()?.sortedByDescending { it.lastModified() } ?: emptyList()
+        } else {
+            val fallback = File("/sdcard/Download")
+            files = fallback.listFiles()?.sortedByDescending { it.lastModified() } ?: emptyList()
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().background(Color(0xFF121212)).padding(16.dp)) {
+        Text("File Viewer", color = Color.Cyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text("Path: $currentPath", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(bottom = 8.dp))
+        
+        LazyColumn(modifier = Modifier.weight(1f)) {
+            items(files) { file ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable {
+                        if (file.isDirectory) {
+                            currentPath = file.absolutePath
+                        } else {
+                            try {
+                                selectedFileContent = file.readText()
+                                selectedFileName = file.name
+                            } catch (e: Exception) {
+                                selectedFileContent = "Error reading file: ${e.message}"
+                                selectedFileName = file.name
+                            }
+                        }
+                    },
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A2A))
+                ) {
+                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = if (file.isDirectory) "📁 " else "📄 ",
+                            fontSize = 20.sp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(file.name, color = Color.White, fontWeight = FontWeight.Bold)
+                            Text("${file.length()} bytes", color = Color.Gray, fontSize = 10.sp)
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (selectedFileContent != null) {
+            AlertDialog(
+                onDismissRequest = { selectedFileContent = null },
+                title = { Text(selectedFileName, color = Color.Cyan) },
+                text = {
+                    Box(modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) {
+                        Text(selectedFileContent ?: "", color = Color.White, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                    }
+                },
+                confirmButton = { TextButton(onClick = { selectedFileContent = null }) { Text("Close", color = Color.Cyan) } }
+            )
+        }
+    }
+}
+
 fun cleanAnsi(text: String): String {
     var cleaned = text
     cleaned = cleaned.replace(Regex("""\u001B\[[0-9;?]*[a-zA-Z]"""), "")

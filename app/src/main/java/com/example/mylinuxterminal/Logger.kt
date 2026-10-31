@@ -11,45 +11,55 @@ import java.util.Date
 import java.util.Locale
 
 object Logger {
-    private var logFile: File? = null
+    private val logFiles = mutableListOf<File>()
 
     fun init(context: Context) {
+        // ۱. مسیر پوشه دانلود (اولویت اول)
         try {
-            // تلاش برای نوشتن در پوشه Download
             val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            val file = File(downloadDir, "HguTerminal_Crash_Log.txt")
-            file.appendText("") // تست دسترسی
-            logFile = file
-        } catch (e: Exception) {
-            // اگر دسترسی نبود، در حافظه داخلی اپ بنویس
-            try {
-                val dir = context.getExternalFilesDir(null) ?: context.filesDir
-                logFile = File(dir, "HguTerminal_Crash_Log.txt")
-            } catch (e2: Exception) {}
-        }
+            val file1 = File(downloadDir, "HguTerminal_Log.txt")
+            file1.appendText("") // تست نوشتن
+            logFiles.add(file1)
+        } catch (e: Exception) {}
+
+        // ۲. مسیر اختصاصی برنامه در حافظه خارجی
+        try {
+            val dir2 = context.getExternalFilesDir(null)
+            if (dir2 != null) logFiles.add(File(dir2, "HguTerminal_Log.txt"))
+        } catch (e: Exception) {}
+
+        // ۳. مسیر حافظه داخلی برنامه (پشتیبان)
+        try {
+            logFiles.add(File(context.filesDir, "HguTerminal_Log.txt"))
+        } catch (e: Exception) {}
 
         // پاک کردن لاگ‌های قبلی
-        if (logFile?.exists() == true) logFile?.delete()
+        logFiles.forEach { if (it.exists()) it.delete() }
 
-        log("========================================")
-        log("APP STARTED on ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.SDK_INT})")
+        writeToAll("========================================")
+        writeToAll("APP STARTED on ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.SDK_INT})")
         
         // ثبت خودکار کرش‌ها
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             val sw = StringWriter()
             throwable.printStackTrace(PrintWriter(sw))
-            log("🚨 FATAL CRASH on thread [${thread.name}]:\n$sw")
+            writeToAll("🚨 FATAL CRASH on thread [${thread.name}]:\n$sw")
             android.os.Process.killProcess(android.os.Process.myPid())
             System.exit(1)
         }
     }
 
-    fun log(message: String) {
-        try {
-            val timestamp = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
-            logFile?.appendText("[$timestamp] $message\n")
-        } catch (e: Exception) {
-            e.printStackTrace()
+    private fun writeToAll(message: String) {
+        val timestamp = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
+        val formattedMessage = "[$timestamp] $message\n"
+        logFiles.forEach { file ->
+            try {
+                file.appendText(formattedMessage)
+            } catch (e: Exception) {}
         }
+    }
+
+    fun log(message: String) {
+        writeToAll(message)
     }
 }

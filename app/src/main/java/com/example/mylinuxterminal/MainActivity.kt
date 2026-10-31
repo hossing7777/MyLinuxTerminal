@@ -215,7 +215,19 @@ fun TerminalScreen() {
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
-    val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
+    val availablePackages = listOf("python3", "git", "nano", "bash", "curl", "wget", "nodejs", "vim", "htop", "net-tools", "procps")
+    val selectedPackages = remember { mutableStateListOf("python3", "git", "nano", "bash", "net-tools", "procps") }
+    val manageStorageLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.StartActivityForResult()) {}
+    
+    fun checkStoragePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+            intent.data = Uri.parse("package:${context.packageName}")
+            manageStorageLauncher.launch(intent)
+        }
+    }
+    
+val setupDoneFile = remember { File(context.filesDir, "alpine/.setup_done") }
     val chatsDir = remember { File(context.filesDir, "chats").apply { mkdirs() } }
     val globalMemoryFile = remember { File(context.filesDir, "global_lessons.txt") }
 
@@ -273,9 +285,39 @@ fun TerminalScreen() {
             val tmpDir = File(context.cacheDir, "proot_tmp").absolutePath
             File(tmpDir).mkdirs()
             
+            // ساخت اسکریپت نصب پیش‌نیازها
+            val setupScriptFile = File(context.filesDir, "terminal_setup.sh")
+            val setupPackages = if (!setupDoneFile.exists() && packagesToInstall.isNotEmpty()) {
+                packagesToInstall.joinToString("\n") { "install_pkg $it" } + "\ntouch /.setup_done"
+            } else ""
+            
+            val setupContent = """
+                #!/bin/sh
+                CACHE=/sdcard/Download/Local_AI_Models/Library_Cache/apk
+                mkdir -p ${'$'}CACHE
+                install_pkg() {
+                    PKG=${'$'}1
+                    if apk info -e ${'$'}PKG >/dev/null 2>&1; then return; fi
+                    if ls ${'$'}CACHE/${'$'}PKG-*.apk >/dev/null 2>&1; then
+                        echo "📦 [Local Cache] Installing ${'$'}PKG from local storage..."
+                        apk add --cache-dir=${'$'}CACHE --allow-untrusted ${'$'}PKG
+                    else
+                        echo "🌐 [Internet] Downloading and installing ${'$'}PKG..."
+                        apk add --cache-dir=${'$'}CACHE ${'$'}PKG
+                    fi
+                }
+                install_pkg bash
+                install_pkg net-tools
+                install_pkg procps
+                $setupPackages
+                echo '::SETUP_DONE::'
+            """.trimIndent()
+            setupScriptFile.writeText(setupContent)
+            setupScriptFile.setExecutable(true)
+
             val scriptFile = File(context.filesDir, "start.sh")
             scriptFile.writeText("""
-                $prootPath --kill-on-exit --link2symlink --sysvipc -0 -r $alpinePath -w / -b /dev -b /proc -b /sys -b /storage/emulated/0:/sdcard -b ${context.filesDir.absolutePath}:/host_files /bin/sh -c "exec /bin/sh"
+                $prootPath --kill-on-exit --link2symlink --sysvipc -0 -r $alpinePath -w / -b /dev -b /proc -b /sys -b /storage/emulated/0:/sdcard -b ${context.filesDir.absolutePath}:/host_files /bin/sh -c "sh /host_files/terminal_setup.sh; exec /bin/sh"
             """.trimIndent())
             scriptFile.setExecutable(true)
 
@@ -320,7 +362,12 @@ fun TerminalScreen() {
     LaunchedEffect(Unit) { 
         extractLinux(context, mutableListOf<String>())
         isExtracted = true
-        startTerminal(emptyList())
+        checkStoragePermission()
+        if (setupDoneFile.exists()) {
+            startTerminal(emptyList())
+        } else {
+            showPackageDialog = true
+        }
     }
 
     // 👇 Shell Agent Logic (No API Required) 👇
@@ -473,6 +520,43 @@ fun TerminalScreen() {
             }
             isAiRunning = false
         }
+    }
+
+    
+    if (showPackageDialog) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("Select Packages", color = Color.Cyan) },
+            text = {
+                LazyColumn {
+                    items(availablePackages) { pkg ->
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(4.dp)) {
+                            Checkbox(
+                                checked = selectedPackages.contains(pkg), 
+                                onCheckedChange = { if (it) selectedPackages.add(pkg) else selectedPackages.remove(pkg) }
+                            )
+                            Text(pkg)
+                        }
+                    }
+                }
+            },
+            confirmButton = { 
+                Button(onClick = { 
+                    showPackageDialog = false; 
+                    isInstalling = true; 
+                    startTerminal(selectedPackages.toList()) 
+                }) { Text("Install") } 
+            },
+            dismissButton = { 
+                TextButton(onClick = { 
+                    setupDoneFile.parentFile?.mkdirs(); 
+                    setupDoneFile.createNewFile(); 
+                    prefs.edit().putBoolean("skip_setup", true).apply(); 
+                    showPackageDialog = false; 
+                    startTerminal(emptyList()) 
+                }) { Text("Skip") } 
+            }
+        )
     }
 
     if (showAiDialog) {

@@ -85,8 +85,18 @@ data class ChatSession(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        HardwareBridge.initTts(this)
+        HardwareBridge.init(this)
         setContent { MainScreen() }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        HardwareBridge.setActivity(this)
+    }
+
+    override fun onPause() {
+        HardwareBridge.setActivity(null)
+        super.onPause()
     }
 }
 
@@ -445,45 +455,66 @@ fun TerminalScreen() {
                     agentLogs.add("📖 Extracting code...")
                     var rawCode = BrowserBridge.extractCode()
                     
-                    if (rawCode.contains("[THOUGHT]")) {
-                        val thought = rawCode.substringAfter("[THOUGHT]").substringBefore("[/THOUGHT]").trim()
-                        agentLogs.add("🧠 Thought: ${thought.take(50)}...")
-                    }
-                    
-                    if (rawCode.contains("[HARDWARE]")) {
-                        val hwCmd = rawCode.substringAfter("[HARDWARE]").substringBefore("[/HARDWARE]").trim()
-                        agentLogs.add("⚙️ Hardware Command: $hwCmd")
-                        try {
-                            val action = hwCmd.substringBefore(" ")
-                            val arg = hwCmd.substringAfter(" ", "")
-                            val url = java.net.URL("http://127.0.0.1:8081/hardware?action=" + java.net.URLEncoder.encode(action, "UTF-8") + "&arg=" + java.net.URLEncoder.encode(arg, "UTF-8"))
-                            url.openStream().use { stream -> stream.bufferedReader().readText() }
-                        } catch (e: Exception) { agentLogs.add("❌ HW Error: ${e.message}") }
-                    }
-                    
-                    if (rawCode.contains("[PLAN]")) {
-                        currentPlan = rawCode.substringAfter("[PLAN]").substringBefore("[/PLAN]").trim()
-                    }
-                    
-                    rawCode = rawCode.replace("[THOUGHT]", "").replace("[/THOUGHT]", "")
-                                     .replace("[HARDWARE]", "").replace("[/HARDWARE]", "")
-                                     .replace("[PLAN]", "").replace("[/PLAN]", "")
-                                     
-                    if (rawCode.contains("```python")) {
-                        rawCode = rawCode.substringAfter("```python").substringBefore("```").trim()
-                    } else if (rawCode.contains("```")) {
-                        rawCode = rawCode.substringAfter("```").substringBefore("```").trim()
+                    // ---------- 1) استخراج بلوک کد اول ----------
+                    val codeBlockRegex = Regex("```(?:python|py)?\\s*\\n?(.*?)```", RegexOption.DOT_MATCHES_ALL)
+                    val codeMatch = codeBlockRegex.find(rawCode)
+                    var extractedCode = when {
+                        codeMatch != null -> codeMatch.groupValues[1].trim()
+                        rawCode.contains("```python") -> rawCode.substringAfter("```python").substringBefore("```").trim()
+                        rawCode.contains("```") -> rawCode.substringAfter("```").substringBefore("```").trim()
+                        else -> rawCode
                     }
 
-                    if (rawCode == "NO_CODE_FOUND" || rawCode.isBlank() || rawCode.contains("Error: Browser not ready")) {
+                    // ---------- 2) پردازش تگ‌ها از rawCode اصلی ----------
+                    if (rawCode.contains("[THOUGHT]")) {
+                        val thought = rawCode.substringAfter("[THOUGHT]").substringBefore("[/THOUGHT]").trim()
+                        if (thought.isNotBlank()) agentLogs.add("🧠 Thought: ${thought.take(60)}...")
+                    }
+
+                    if (rawCode.contains("[HARDWARE]")) {
+                        val hwCmd = rawCode.substringAfter("[HARDWARE]").substringBefore("[/HARDWARE]").trim()
+                        if (hwCmd.isNotBlank()) {
+                            agentLogs.add("⚙️ Hardware Command: $hwCmd")
+                            try {
+                                val action = hwCmd.substringBefore(" ").trim()
+                                val arg = hwCmd.substringAfter(" ", "").trim()
+                                val encAction = java.net.URLEncoder.encode(action, "UTF-8")
+                                val encArg = java.net.URLEncoder.encode(arg, "UTF-8")
+                                val hwUrl = java.net.URL("http://127.0.0.1:8081/hardware?action=$encAction&arg=$encArg")
+                                // 🔑 اجرای HTTP روی IO، نه Main Thread
+                                val hwResult = withContext(Dispatchers.IO) {
+                                    hwUrl.openStream().use { stream -> stream.bufferedReader().readText() }
+                                }
+                                agentLogs.add("✅ HW Result: $hwResult")
+                            } catch (e: Exception) {
+                                agentLogs.add("❌ HW Error: ${e.message ?: e.javaClass.simpleName}")
+                            }
+                        }
+                    }
+
+                    if (rawCode.contains("[PLAN]")) {
+                        val plan = rawCode.substringAfter("[PLAN]").substringBefore("[/PLAN]").trim()
+                        if (plan.isNotBlank()) currentPlan = plan
+                    }
+
+                    // ---------- 3) حذف کامل بلوک تگ‌ها (همراه با محتوا) از کد استخراج‌شده ----------
+                    extractedCode = extractedCode
+                        .replace(Regex("\\[HARDWARE\\][\\s\\S]*?\\[/HARDWARE\\]\\s*"), "")
+                        .replace(Regex("\\[THOUGHT\\][\\s\\S]*?\\[/THOUGHT\\]\\s*"), "")
+                        .replace(Regex("\\[PLAN\\][\\s\\S]*?\\[/PLAN\\]\\s*"), "")
+                        .trim()
+
+                    if (extractedCode.isBlank() ||
+                        extractedCode == "NO_CODE_FOUND" ||
+                        extractedCode.contains("Error: Browser not ready")) {
                         agentLogs.add("⚠️ No valid code found. Retrying...")
                         currentPrompt = "Please provide a valid Python code block for: $userRequest"
                         continue
                     }
-                    
+
                     agentLogs.add("📜 Code Extracted. Writing to disk...")
                     val scriptFile = File(context.filesDir, "ai_script.py")
-                    scriptFile.writeText(rawCode)
+                    scriptFile.writeText(extractedCode)
                     
                     agentLogs.add("▶️ Executing Python script...")
                     val cmd = "if ! command -v python3 >/dev/null 2>&1; then apk add python3 >/dev/null 2>&1; fi; python3 /host_files/ai_script.py 2>&1"

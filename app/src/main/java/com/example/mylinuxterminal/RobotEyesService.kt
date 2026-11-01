@@ -39,9 +39,18 @@ class RobotEyesService : AccessibilityService() {
         if (editTexts.isNotEmpty()) {
             return editTexts[0].text?.toString() ?: ""
         }
-        // اگر پیدا نشد، هر نودی که شامل http باشه رو بگیر
-        val allNodes = mutableListOf<AccessibilityNodeInfo>()
-        root.findAccessibilityNodeInfosByText("http", allNodes)
-        return allNodes.firstOrNull()?.text?.toString() ?: ""
+        // اگر پیدا نشد، نودهای حاوی http را جستجو کن
+        try {
+            val nodes = root.findAccessibilityNodeInfosByText("http")
+            for (node in nodes) {
+                val text = node.text?.toString() ?: ""
+                if (text.startsWith("http") || text.contains("deepseek")) {
+                    return text
+                }
+            }
+        } catch (e: Exception) {
+            return ""
+        }
+        return ""
     }
 }

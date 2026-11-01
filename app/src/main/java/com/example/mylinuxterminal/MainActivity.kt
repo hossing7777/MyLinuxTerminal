@@ -676,8 +676,11 @@ fun TerminalScreen() {
                         if (!isAiRunning) {
                             OutlinedTextField(
                                 value = aiPrompt, onValueChange = { aiPrompt = it },
-                                placeholder = { Text("درخواست خود را بنویسید...", color = Color.Gray) },
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
+                                placeholder = { Text("Type your request here...", color = Color.Gray) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 100.dp, max = 200.dp) // حداکثر ارتفاع ۲۰۰
+                                    .verticalScroll(rememberScrollState()), // اضافه کردن اسکرول
                                 colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
                             )
                             Spacer(modifier = Modifier.height(16.dp))

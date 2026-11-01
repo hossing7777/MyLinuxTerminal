@@ -92,6 +92,7 @@ class MainActivity : ComponentActivity() {
 
 val availableModels = listOf(
     "shell_agent" to "🤖 Shell Agent (No API)",
+    "external_browser" to "🌐 External Browser (Chrome)",
     "full_auto" to "🔧 Full Auto (API)",
     "nvidia/nemotron-3-ultra-550b-a55b:free" to "Nemotron 3 Ultra"
 )
@@ -554,6 +555,18 @@ fun TerminalScreen() {
     }
 
     fun runAgent(userRequest: String) {
+        if (selectedModelId == "external_browser") {
+            try {
+                agentLogs.add("🌐 Opening External Browser...")
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://duck.ai"))
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                agentLogs.add("✅ External browser opened successfully.")
+            } catch (e: Exception) {
+                agentLogs.add("❌ Error opening browser: ${e.message}")
+            }
+            return
+        }
         if (selectedModelId == "shell_agent") {
             runShellAgent(userRequest)
             return

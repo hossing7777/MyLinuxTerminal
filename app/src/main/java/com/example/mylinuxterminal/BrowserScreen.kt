@@ -108,13 +108,21 @@ fun BrowserScreen(initialUrl: String = "https://www.google.com") {
                     settings.displayZoomControls = false
                     settings.mediaPlaybackRequiresUserGesture = false
                     settings.userAgentString =
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                        "Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 " +
+                        "(KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
                     settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     settings.allowFileAccess = true
                     settings.allowContentAccess = true
                     settings.setGeolocationEnabled(true)
                     settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+                    settings.javaScriptCanOpenWindowsAutomatically = true
+                    settings.setSupportMultipleWindows(false)
+                    settings.loadsImagesAutomatically = true
+                    settings.blockNetworkImage = false
+                    settings.blockNetworkLoads = false
+                    // اضافه کردن کوکی‌ها برای Cloudflare
+                    android.webkit.CookieManager.getInstance().setAcceptCookie(true)
+                    android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
                     CookieManager.getInstance().setAcceptCookie(true)
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)

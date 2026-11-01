@@ -693,14 +693,8 @@ fun TerminalScreen() {
                                         Toast.makeText(context, "Speech recognition not available", Toast.LENGTH_SHORT).show()
                                     }
                                 }) { Icon(Icons.Default.Search, "Speak", tint = Color.Cyan) }
-                                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Button(onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))) { Text("Start", fontSize = 14.sp) }
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Button(onClick = { 
-                                        isAiRunning = false
-                                        agentLogs.add("🛑 Stopped by user.")
-                                    }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) { Icon(Icons.Default.Clear, "Stop", tint = Color.White) }
-                                }
+                                Button(onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))) { Text("Start", fontSize = 14.sp) }
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Button(onClick = { 
                                     isAiRunning = false
@@ -761,7 +755,20 @@ fun TerminalScreen() {
                     Spacer(modifier = Modifier.height(16.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("گزارش زنده:", color = Color.LightGray, fontSize = 12.sp)
-                        TextButton(onClick = { agentLogs.clear() }) { Text("پاک کردن", color = Color.Red, fontSize = 12.sp) }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (isAiRunning) {
+                                Button(onClick = { 
+                                    isAiRunning = false
+                                    agentLogs.add("🛑 Stopped by user.")
+                                }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) { 
+                                    Icon(Icons.Default.Clear, "Stop", tint = Color.White, modifier = Modifier.size(16.dp)) 
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("STOP", color = Color.White, fontSize = 10.sp)
+                                }
+                                Spacer(modifier = Modifier.width(4.dp))
+                            }
+                            TextButton(onClick = { agentLogs.clear() }) { Text("پاک کردن", color = Color.Red, fontSize = 12.sp) }
+                        }
                     }
                     LazyColumn(modifier = Modifier.height(200.dp).fillMaxWidth().background(Color.Black, RoundedCornerShape(8.dp)).padding(8.dp)) {
                         items(agentLogs) { log -> Text(log, color = Color(0xFF00FF00), fontSize = 11.sp, fontFamily = FontFamily.Monospace) }

@@ -53,6 +53,38 @@ object HardwareBridge {
     }
 
     // دستور میکروفون (فقط تریگر را برمی‌گرداند، پیاده‌سازی UI برای شنیدن نیاز به Activity دارد)
+
+    fun getCpuUsage(context: Context): String {
+        return try {
+            // روش اول: از ActivityManager
+            val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            val memoryInfo = android.app.ActivityManager.MemoryInfo()
+            activityManager.getMemoryInfo(memoryInfo)
+            
+            // خواندن CPU از /proc/stat (در اندروید ممکنه محدود باشه، پس از fallback استفاده می‌کنیم)
+            val cpuUsage = try {
+                val reader = java.io.BufferedReader(java.io.FileReader("/proc/stat"))
+                val line = reader.readLine()
+                reader.close()
+                if (line != null && line.startsWith("cpu ")) {
+                    val parts = line.split(Regex("\\s+"))
+                    val user = parts[1].toLongOrNull() ?: 0
+                    val nice = parts[2].toLongOrNull() ?: 0
+                    val system = parts[3].toLongOrNull() ?: 0
+                    val idle = parts[4].toLongOrNull() ?: 0
+                    val total = user + nice + system + idle
+                    if (total > 0) "${((user + nice + system) * 100 / total)}%" else "N/A"
+                } else "N/A"
+            } catch (e: Exception) {
+                "N/A (Permission denied)"
+            }
+            
+            "CPU: $cpuUsage, RAM: ${(memoryInfo.availMem * 100 / memoryInfo.totalMem)}% free"
+        } catch (e: Exception) {
+            "Error: ${e.message}"
+        }
+    }
+
     fun getSpeechIntent(): Intent {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)

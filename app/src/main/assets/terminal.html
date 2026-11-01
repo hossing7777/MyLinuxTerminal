@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <link rel="stylesheet" href="xterm.css" />
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; background-color: #000; overflow: hidden; }
+        #terminal { width: 100%; height: 100%; padding: 2px; box-sizing: border-box; }
+    </style>
+</head>
+<body>
+    <div id="terminal"></div>
+    <script src="xterm.js"></script>
+    <script src="xterm-addon-fit.js"></script>
+    <script>
+        let term;
+        let fitAddon;
+
+        window.onload = function() {
+            try {
+                term = new Terminal({
+                    cursorBlink: true,
+                    fontFamily: 'monospace',
+                    fontSize: 14,
+                    theme: { background: '#000000', foreground: '#00ff00' }
+                });
+                fitAddon = new FitAddon.FitAddon();
+                term.loadAddon(fitAddon);
+                term.open(document.getElementById('terminal'));
+                fitAddon.fit();
+                
+                term.onData(function(data) {
+                    if (window.AndroidInterface) {
+                        window.AndroidInterface.postMessage(data);
+                    }
+                });
+                
+                window.onresize = function() { fitAddon.fit(); };
+                
+                // سیگنال به کاتلین که ما آماده‌ایم
+                if (window.AndroidInterface) {
+                    window.AndroidInterface.onReady();
+                }
+            } catch(e) {
+                document.getElementById('terminal').innerText = "Error: " + e.message;
+            }
+        };
+
+        // دریافت داده به صورت JSON (امن و بدون خطا)
+        window.writeToTerminal = function(data) {
+            if (term) {
+                term.write(data);
+            }
+        };
+
+        window.focusTerminal = function() {
+            if (term) term.focus();
+        };
+    </script>
+</body>
+</html>

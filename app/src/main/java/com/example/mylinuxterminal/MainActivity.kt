@@ -865,11 +865,14 @@ fun TerminalScreen() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FileViewerScreen() {
+    val context = LocalContext.current
     var files by remember { mutableStateOf(listOf<File>()) }
     var selectedFileContent by remember { mutableStateOf<String?>(null) }
     var selectedFileName by remember { mutableStateOf("") }
     var currentPath by remember { mutableStateOf("/sdcard/Download") }
     var previewAsHtml by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var deleteTarget by remember { mutableStateOf<File?>(null) }
 
     LaunchedEffect(currentPath) {
         val dir = File(currentPath)
@@ -898,18 +901,9 @@ fun FileViewerScreen() {
                             Column { Text(file.name, color = Color.White, fontWeight = FontWeight.Bold); Text("${file.length()} bytes", color = Color.Gray, fontSize = 10.sp) }
                         }
                         IconButton(onClick = {
-                            try {
-                                if (file.deleteRecursively()) {
-                                    android.widget.Toast.makeText(context, "Deleted: ${file.name}", android.widget.Toast.LENGTH_SHORT).show()
-                                    // رفرش لیست
-                                    val dir = File(currentPath)
-                                    files = dir.listFiles()?.sortedByDescending { it.lastModified() } ?: emptyList()
-                                } else {
-                                    android.widget.Toast.makeText(context, "Failed to delete", android.widget.Toast.LENGTH_SHORT).show()
-                                }
-                            } catch (e: Exception) {
-                                android.widget.Toast.makeText(context, "Error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
-                            }
+                            // ذخیره فایل برای حذف در دیالوگ
+                            deleteTarget = file
+                            showDeleteDialog = true
                         }) {
                             Icon(Icons.Default.Delete, "Delete", tint = Color.Red)
                         }
@@ -917,6 +911,34 @@ fun FileViewerScreen() {
                 }
             }
         }
+        if (showDeleteDialog && deleteTarget != null) {
+            AlertDialog(
+                onDismissRequest = { showDeleteDialog = false; deleteTarget = null },
+                title = { Text("Confirm Delete", color = Color.Red, fontWeight = FontWeight.Bold) },
+                text = { Text("Are you sure you want to delete:\n${deleteTarget?.name}?\n\nThis action cannot be undone.", color = Color.White) },
+                confirmButton = {
+                    Button(onClick = {
+                        try {
+                            if (deleteTarget?.deleteRecursively() == true) {
+                                android.widget.Toast.makeText(context, "Deleted: ${deleteTarget?.name}", android.widget.Toast.LENGTH_SHORT).show()
+                                val dir = File(currentPath)
+                                files = dir.listFiles()?.sortedByDescending { it.lastModified() } ?: emptyList()
+                            } else {
+                                android.widget.Toast.makeText(context, "Failed to delete", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(context, "Error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        showDeleteDialog = false
+                        deleteTarget = null
+                    }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) { Text("Delete", color = Color.White) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteDialog = false; deleteTarget = null }) { Text("Cancel", color = Color.Cyan) }
+                }
+            )
+        }
+        
         if (selectedFileContent != null) {
             AlertDialog(
                 onDismissRequest = { selectedFileContent = null },

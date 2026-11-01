@@ -693,12 +693,14 @@ fun TerminalScreen() {
                                         Toast.makeText(context, "Speech recognition not available", Toast.LENGTH_SHORT).show()
                                     }
                                 }) { Icon(Icons.Default.Search, "Speak", tint = Color.Cyan) }
-                                Button(onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))) { Text("Start", fontSize = 14.sp) }
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Button(onClick = { 
-                                    isAiRunning = false
-                                    agentLogs.add("🛑 Stopped by user.")
-                                }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) { Icon(Icons.Default.Clear, "Stop", tint = Color.White) }
+                                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Button(onClick = { if (aiPrompt.isNotBlank()) runAgent(aiPrompt) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE))) { Text("Start", fontSize = 14.sp) }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Button(onClick = { 
+                                        isAiRunning = false
+                                        agentLogs.add("🛑 Stopped by user.")
+                                    }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) { Icon(Icons.Default.Clear, "Stop", tint = Color.White) }
+                                }
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Button(onClick = { 
                                     isAiRunning = false

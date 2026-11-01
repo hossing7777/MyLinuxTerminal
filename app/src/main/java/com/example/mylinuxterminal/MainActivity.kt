@@ -147,6 +147,7 @@ fun TerminalScreen() {
     var showAiDialog by remember { mutableStateOf(false) }
     var aiPrompt by remember { mutableStateOf("") }
     var isAiRunning by remember { mutableStateOf(false) }
+    var isDuckAiOnline by remember { mutableStateOf(false) }
     var aiProgress by remember { mutableStateOf(0) }
     var agentViewMode by remember { mutableStateOf(0) }
     var currentPlan by remember { mutableStateOf("") }
@@ -380,6 +381,26 @@ fun TerminalScreen() {
                     } else break
                 }
             }
+        }
+    }
+
+    // حلقه بررسی وضعیت Duck.ai هر ۱۵ ثانیه
+    LaunchedEffect(Unit) {
+        while (true) {
+            try {
+                withContext(Dispatchers.IO) {
+                    val connection = java.net.URL("https://duck.ai").openConnection() as java.net.HttpURLConnection
+                    connection.connectTimeout = 5000
+                    connection.readTimeout = 5000
+                    connection.requestMethod = "HEAD"
+                    val responseCode = connection.responseCode
+                    isDuckAiOnline = responseCode in 200..399
+                    connection.disconnect()
+                }
+            } catch (e: Exception) {
+                isDuckAiOnline = false
+            }
+            delay(15000)
         }
     }
 
@@ -672,7 +693,19 @@ fun TerminalScreen() {
             shape = RoundedCornerShape(16.dp),
             title = { 
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("AI Agent", color = Color.Cyan, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("AI Agent", color = Color.Cyan, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        // چراغ وضعیت اتصال
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .background(
+                                    color = if (isDuckAiOnline) Color.Green else Color.Red,
+                                    shape = RoundedCornerShape(50)
+                                )
+                        )
+                    }
                     IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
                 }
             },

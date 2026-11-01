@@ -554,16 +554,75 @@ fun TerminalScreen() {
         }
     }
 
+    fun scrapeResponseFromWebView(url: String, onResult: (String) -> Unit) {
+        val wv = android.webkit.WebView(context)
+        wv.settings.javaScriptEnabled = true
+        wv.webViewClient = object : android.webkit.WebViewClient() {
+            override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
+                // تزریق JS برای گرفتن آخرین پاسخ DeepSeek
+                view?.evaluateJavascript("""
+                    (function() {
+                        let messages = document.querySelectorAll('.ds-markdown');
+                        if (messages.length > 0) {
+                            return messages[messages.length - 1].innerText;
+                        }
+                        return 'NO_MESSAGE_FOUND';
+                    })()
+                """) { result ->
+                    val cleanResult = result?.removeSurrounding("\"")?.replace("\\n", "\n") ?: "ERROR"
+                    onResult(cleanResult)
+                    wv.destroy()
+                }
+            }
+        }
+        wv.loadUrl(url)
+    }
+
     fun runAgent(userRequest: String) {
         if (selectedModelId == "external_browser") {
-            try {
-                agentLogs.add("🌐 Opening External Browser...")
-                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://duck.ai"))
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
-                agentLogs.add("✅ External browser opened successfully.")
-            } catch (e: Exception) {
-                agentLogs.add("❌ Error opening browser: ${e.message}")
+            coroutineScope.launch {
+                try {
+                    agentLogs.add("🌐 Opening External Browser (DeepSeek)...")
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://chat.deepseek.com"))
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(intent)
+                    
+                    delay(6000) // صبر تا لود شود
+                    
+                    agentLogs.add("⌨️ Typing prompt...")
+                    RobotEyesService.instance?.typeText(userRequest)
+                    
+                    delay(1000)
+                    
+                    agentLogs.add("📤 Clicking Send...")
+                    val sendClicked = RobotEyesService.instance?.clickByText("Send") == true ||
+                                     RobotEyesService.instance?.clickByText("ارسال") == true ||
+                                     RobotEyesService.instance?.clickByText("↑") == true
+                    agentLogs.add(if (sendClicked) "✅ Send clicked." else "⚠️ Send button not found, please click manually.")
+                    
+                    agentLogs.add("⏳ Waiting 20s for response...")
+                    delay(20000)
+                    
+                    val currentUrl = RobotEyesService.instance?.getCurrentUrl() ?: ""
+                    agentLogs.add("🔗 URL: $currentUrl")
+                    
+                    if (currentUrl.isNotBlank() && currentUrl.contains("deepseek")) {
+                        agentLogs.add("📖 Extracting response via WebView...")
+                        scrapeResponseFromWebView(currentUrl) { response ->
+                            coroutineScope.launch(Dispatchers.Main) {
+                                agentLogs.add("📝 Response: ${response.take(200)}...")
+                                agentLogs.add("✅ Done!")
+                                isAiRunning = false
+                            }
+                        }
+                    } else {
+                        agentLogs.add("❌ Could not get valid URL.")
+                        isAiRunning = false
+                    }
+                } catch (e: Exception) {
+                    agentLogs.add("❌ Error: ${e.message}")
+                    isAiRunning = false
+                }
             }
             return
         }
